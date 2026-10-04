@@ -2,54 +2,61 @@ import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
 
-// StudyFlow Phase 2-②①
+// ============================================================
+// StudyFlow Phase 2-②②
+// ============================================================
+//
+// Phase 1
+// ・今日のタスク
+// ・タスク完了
+// ・達成率
+// ・タスク追加
+// ・タスクごとのタイマー
+// ・実績学習時間
+// ・今日の時間割
+// ・進捗表示
+// ・localStorage保存
+//
+// Phase 2-①
+// ・勉強開始時刻
+// ・勉強終了時刻
+// ・固定予定
+// ・タスク優先度
+// ・自動時間割
+//
+// Phase 2-②①
+// ・起床時刻
+// ・朝の支度時間
+// ・自習室利用
+// ・自習室への移動時間
+// ・今日の勉強時間
+// ・固定予定
+// ・生活条件を時間割に反映
+//
+// Phase 2-②②
+// ・勉強可能時間の自動計算
+// ・朝の支度終了時刻を自動計算
+// ・自習室利用時の移動時間を自動反映
+// ・固定予定を除外した実質勉強可能時間を計算
+// ・必要勉強時間と比較
+// ・時間不足時の警告
+// ・空き時間を自動検出
+// ・空き時間に優先度順でタスクを自動配置
+//
+// Supabaseはまだ使用しません。
+// ============================================================
 
-/*
-========================================
- StudyFlow Phase 2-②①
-========================================
 
-Phase 1
-・今日のタスク
-・タスク完了
-・達成率
-・タスク追加
-・タスクごとのタイマー
-・実績学習時間
-・今日の時間割
-・進捗表示
-・localStorage保存
-
-Phase 2-①
-・勉強開始時刻
-・勉強終了時刻
-・固定予定
-・タスク優先度
-・自動時間割
-
-Phase 2-②①
-・起床時刻
-・朝の支度時間
-・自習室利用
-・自習室への移動時間
-・今日の勉強時間
-・固定予定
-・生活条件を時間割に反映
-
-Supabaseはまだ使用しません。
-*/
-
-
-// ========================================
+// ============================================================
 // localStorage
-// ========================================
+// ============================================================
 
-const STORAGE_KEY = "studyflow_phase2_v2";
+const STORAGE_KEY = "studyflow_phase2_v3";
 
 
-// ========================================
+// ============================================================
 // 初期タスク
-// ========================================
+// ============================================================
 
 const INITIAL_TASKS = [
   {
@@ -95,30 +102,35 @@ const INITIAL_TASKS = [
 ];
 
 
-// ========================================
+// ============================================================
 // 初期設定
-// ========================================
+// ============================================================
 
 const INITIAL_SETTINGS = {
+  // 起床
   wakeUpTime: "07:00",
 
+  // 朝の支度
   morningPrepMinutes: 70,
 
+  // 自習室
   useStudyRoom: false,
 
+  // 自習室までの移動
   travelMinutes: 40,
 
+  // 勉強時間の基本範囲
   studyStart: "14:00",
-
   studyEnd: "19:20",
 
+  // 固定予定
   fixedSchedules: []
 };
 
 
-// ========================================
+// ============================================================
 // データ読み込み
-// ========================================
+// ============================================================
 
 function loadData() {
 
@@ -130,7 +142,6 @@ function loadData() {
           STORAGE_KEY
         )
       );
-
 
     if (
       saved &&
@@ -186,9 +197,9 @@ function loadData() {
 }
 
 
-// ========================================
+// ============================================================
 // データ保存
-// ========================================
+// ============================================================
 
 function saveData(data) {
 
@@ -200,9 +211,9 @@ function saveData(data) {
 }
 
 
-// ========================================
+// ============================================================
 // 今日の日付
-// ========================================
+// ============================================================
 
 function getTodayLabel() {
 
@@ -219,9 +230,9 @@ function getTodayLabel() {
 }
 
 
-// ========================================
+// ============================================================
 // 時刻 → 分
-// ========================================
+// ============================================================
 
 function timeToMinutes(time) {
 
@@ -233,7 +244,8 @@ function timeToMinutes(time) {
     hours,
     minutes
   ] =
-    time.split(":")
+    time
+      .split(":")
       .map(Number);
 
   return (
@@ -244,9 +256,9 @@ function timeToMinutes(time) {
 }
 
 
-// ========================================
+// ============================================================
 // 分 → 時刻
-// ========================================
+// ============================================================
 
 function formatTime(minutes) {
 
@@ -271,9 +283,44 @@ function formatTime(minutes) {
 }
 
 
-// ========================================
+// ============================================================
+// 分 → 「○時間○分」
+// ============================================================
+
+function formatDuration(minutes) {
+
+  const value =
+    Math.max(
+      0,
+      Math.round(
+        Number(minutes) || 0
+      )
+    );
+
+  const hours =
+    Math.floor(
+      value / 60
+    );
+
+  const mins =
+    value % 60;
+
+  if (hours === 0) {
+    return `${mins}分`;
+  }
+
+  if (mins === 0) {
+    return `${hours}時間`;
+  }
+
+  return `${hours}時間${mins}分`;
+
+}
+
+
+// ============================================================
 // タイマー表示
-// ========================================
+// ============================================================
 
 function formatTimer(
   totalSeconds
@@ -296,28 +343,374 @@ function formatTimer(
 }
 
 
-// ========================================
-// 時間割生成
-// ========================================
+// ============================================================
+// 固定予定を分形式に変換
+// ============================================================
+
+function normalizeFixedSchedules(
+  settings
+) {
+
+  return (
+    settings.fixedSchedules ||
+    []
+  )
+    .map(
+      (schedule) => ({
+
+        ...schedule,
+
+        startMinutes:
+          timeToMinutes(
+            schedule.start
+          ),
+
+        endMinutes:
+          timeToMinutes(
+            schedule.end
+          ),
+
+        type:
+          "fixed"
+
+      })
+    )
+    .filter(
+      (schedule) =>
+        schedule.endMinutes >
+        schedule.startMinutes
+    )
+    .sort(
+      (a, b) =>
+        a.startMinutes -
+        b.startMinutes
+    );
+
+}
+
+
+// ============================================================
+// Phase 2-②②
+// 勉強可能時間を自動計算
+// ============================================================
+
+function calculateStudyAvailability(
+  settings
+) {
+
+  // ----------------------------------------------------------
+  // 起床
+  // ----------------------------------------------------------
+
+  const wakeUp =
+    timeToMinutes(
+      settings.wakeUpTime
+    );
+
+
+  // ----------------------------------------------------------
+  // 朝の支度終了
+  // ----------------------------------------------------------
+
+  const morningPrepEnd =
+    wakeUp +
+    Number(
+      settings.morningPrepMinutes
+    || 0
+    );
+
+
+  // ----------------------------------------------------------
+  // 基本の勉強開始・終了
+  // ----------------------------------------------------------
+
+  const requestedStart =
+    timeToMinutes(
+      settings.studyStart
+    );
+
+  const requestedEnd =
+    timeToMinutes(
+      settings.studyEnd
+    );
+
+
+  // ----------------------------------------------------------
+  // 実際に勉強を開始できる時刻
+  //
+  // 起床直後ではなく、
+  // 朝の支度が終わった後から勉強可能。
+  //
+  // さらに自習室を使う場合は
+  // 移動時間を考慮する。
+  // ----------------------------------------------------------
+
+  const travel =
+    settings.useStudyRoom
+      ? Number(
+          settings.travelMinutes
+        ) || 0
+      : 0;
+
+
+  const possibleStart =
+    morningPrepEnd +
+    travel;
+
+
+  const actualStart =
+    Math.max(
+      requestedStart,
+      possibleStart
+    );
+
+
+  // ----------------------------------------------------------
+  // 終了時刻
+  // ----------------------------------------------------------
+
+  const actualEnd =
+    requestedEnd;
+
+
+  // ----------------------------------------------------------
+  // 基本勉強時間
+  // ----------------------------------------------------------
+
+  const totalWindowMinutes =
+    Math.max(
+      0,
+      actualEnd -
+      actualStart
+    );
+
+
+  // ----------------------------------------------------------
+  // 固定予定
+  // ----------------------------------------------------------
+
+  const fixedSchedules =
+    normalizeFixedSchedules(
+      settings
+    );
+
+
+  // ----------------------------------------------------------
+  // 勉強時間帯に重なる固定予定だけ取得
+  // ----------------------------------------------------------
+
+  const relevantFixedSchedules =
+    fixedSchedules
+      .map(
+        (schedule) => {
+
+          const overlapStart =
+            Math.max(
+              actualStart,
+              schedule.startMinutes
+            );
+
+          const overlapEnd =
+            Math.min(
+              actualEnd,
+              schedule.endMinutes
+            );
+
+          return {
+
+            ...schedule,
+
+            overlapStart,
+
+            overlapEnd,
+
+            overlapMinutes:
+              Math.max(
+                0,
+                overlapEnd -
+                overlapStart
+              )
+
+          };
+
+        }
+      )
+      .filter(
+        (schedule) =>
+          schedule.overlapMinutes >
+          0
+      );
+
+
+  // ----------------------------------------------------------
+  // 固定予定の合計時間
+  // ----------------------------------------------------------
+
+  const fixedMinutes =
+    relevantFixedSchedules.reduce(
+      (
+        total,
+        schedule
+      ) =>
+        total +
+        schedule.overlapMinutes,
+      0
+    );
+
+
+  // ----------------------------------------------------------
+  // 実質勉強可能時間
+  // ----------------------------------------------------------
+
+  const availableMinutes =
+    Math.max(
+      0,
+      totalWindowMinutes -
+      fixedMinutes
+    );
+
+
+  // ----------------------------------------------------------
+  // 空き時間を作る
+  // ----------------------------------------------------------
+
+  const freeSlots = [];
+
+  let cursor =
+    actualStart;
+
+
+  for (
+    const schedule
+    of relevantFixedSchedules
+  ) {
+
+    const fixedStart =
+      Math.max(
+        schedule.startMinutes,
+        actualStart
+      );
+
+    const fixedEnd =
+      Math.min(
+        schedule.endMinutes,
+        actualEnd
+      );
+
+
+    // 固定予定より前に空きがある
+    if (
+      fixedStart >
+      cursor
+    ) {
+
+      freeSlots.push({
+
+        start:
+          cursor,
+
+        end:
+          fixedStart,
+
+        minutes:
+          fixedStart -
+          cursor
+
+      });
+
+    }
+
+
+    cursor =
+      Math.max(
+        cursor,
+        fixedEnd
+      );
+
+  }
+
+
+  // 最後の固定予定の後
+  if (
+    cursor <
+    actualEnd
+  ) {
+
+    freeSlots.push({
+
+      start:
+        cursor,
+
+      end:
+        actualEnd,
+
+      minutes:
+        actualEnd -
+        cursor
+
+    });
+
+  }
+
+
+  return {
+
+    wakeUp,
+
+    morningPrepEnd,
+
+    travel,
+
+    requestedStart,
+
+    requestedEnd,
+
+    actualStart,
+
+    actualEnd,
+
+    totalWindowMinutes,
+
+    fixedMinutes,
+
+    availableMinutes,
+
+    fixedSchedules:
+      relevantFixedSchedules,
+
+    freeSlots
+
+  };
+
+}
+
+
+// ============================================================
+// 自動時間割生成
+// ============================================================
 
 function createAutoSchedule(
   tasks,
   settings
 ) {
 
-  const studyStart =
-    timeToMinutes(
-      settings.studyStart
+  const availability =
+    calculateStudyAvailability(
+      settings
     );
 
-  const studyEnd =
-    timeToMinutes(
-      settings.studyEnd
-    );
+
+  const {
+    actualStart,
+    actualEnd,
+    fixedSchedules
+  } =
+    availability;
 
 
   if (
-    studyEnd <= studyStart
+    actualEnd <=
+    actualStart
   ) {
 
     return [];
@@ -325,51 +718,10 @@ function createAutoSchedule(
   }
 
 
-  // ------------------------------------
-  // 固定予定
-  // ------------------------------------
-
-  const fixedSchedules =
-    (
-      settings.fixedSchedules ||
-      []
-    )
-      .map(
-        (schedule) => ({
-
-          ...schedule,
-
-          start:
-            timeToMinutes(
-              schedule.start
-            ),
-
-          end:
-            timeToMinutes(
-              schedule.end
-            ),
-
-          type:
-            "fixed"
-
-        })
-      )
-      .filter(
-        (schedule) =>
-          schedule.end >
-          schedule.start
-      )
-      .sort(
-        (a, b) =>
-          a.start -
-          b.start
-      );
-
-
-  // ------------------------------------
+  // ----------------------------------------------------------
   // 未完了タスク
-  // 優先度が高い順
-  // ------------------------------------
+  // 優先度 → 時間の長い順
+  // ----------------------------------------------------------
 
   const unscheduledTasks =
     tasks
@@ -403,138 +755,195 @@ function createAutoSchedule(
 
   const result = [];
 
-  let current =
-    studyStart;
+
+  // ----------------------------------------------------------
+  // 空き時間をコピー
+  // ----------------------------------------------------------
+
+  const freeSlots =
+    availability.freeSlots.map(
+      (slot) => ({
+        ...slot
+      })
+    );
 
 
-  // ------------------------------------
-  // 空き時間を探す
-  // ------------------------------------
-
-  function findNextAvailable(
-    start,
-    duration
-  ) {
-
-    let candidate =
-      start;
-
-
-    while (
-      candidate + duration <=
-      studyEnd
-    ) {
-
-      const conflict =
-        fixedSchedules.find(
-          (schedule) =>
-            candidate <
-              schedule.end &&
-            candidate + duration >
-              schedule.start
-        );
-
-
-      if (!conflict) {
-
-        return candidate;
-
-      }
-
-
-      candidate =
-        conflict.end;
-
-    }
-
-
-    return null;
-
-  }
-
-
-  // ------------------------------------
-  // タスク配置
-  // ------------------------------------
+  // ----------------------------------------------------------
+  // タスクを配置
+  // ----------------------------------------------------------
 
   for (
     const task
     of unscheduledTasks
   ) {
 
-    const duration =
-      Number(task.minutes) ||
-      30;
+    let remaining =
+      Number(task.minutes) || 30;
 
 
-    const start =
-      findNextAvailable(
-        current,
-        duration
-      );
-
-
-    if (
-      start === null
+    // タスクを1つの空き時間に
+    // できるだけまとめて配置
+    for (
+      let i = 0;
+      i < freeSlots.length;
+      i++
     ) {
 
-      break;
+      const slot =
+        freeSlots[i];
+
+
+      if (
+        slot.minutes <= 0
+      ) {
+
+        continue;
+
+      }
+
+
+      if (
+        remaining <=
+        slot.minutes
+      ) {
+
+        const start =
+          slot.start;
+
+        const end =
+          start +
+          remaining;
+
+
+        result.push({
+
+          ...task,
+
+          start,
+
+          end,
+
+          minutes:
+            remaining,
+
+          type:
+            "task"
+
+        });
+
+
+        slot.start =
+          end;
+
+        slot.minutes =
+          slot.end -
+          slot.start;
+
+
+        remaining =
+          0;
+
+        break;
+
+      }
+
+
+      // ------------------------------------------------------
+      // 空き時間に入り切らない場合
+      // 分割して配置
+      // ------------------------------------------------------
+
+      const start =
+        slot.start;
+
+      const end =
+        slot.end;
+
+
+      result.push({
+
+        ...task,
+
+        start,
+
+        end,
+
+        minutes:
+          slot.minutes,
+
+        type:
+          "task",
+
+        split:
+          true
+
+      });
+
+
+      remaining -=
+        slot.minutes;
+
+
+      slot.start =
+        slot.end;
+
+      slot.minutes =
+        0;
 
     }
-
-
-    const end =
-      start + duration;
-
-
-    result.push({
-
-      ...task,
-
-      start,
-
-      end,
-
-      type:
-        "task"
-
-    });
-
-
-    current =
-      end;
 
   }
 
 
-  // ------------------------------------
-  // 固定予定 + 勉強予定
-  // ------------------------------------
+  // ----------------------------------------------------------
+  // 固定予定を追加
+  // ----------------------------------------------------------
 
   return [
 
     ...result,
 
-    ...fixedSchedules
+    ...fixedSchedules.map(
+      (schedule) => ({
 
-  ].sort(
-    (a, b) =>
-      a.start -
-      b.start
-  );
+        ...schedule,
+
+        start:
+          schedule.overlapStart,
+
+        end:
+          schedule.overlapEnd,
+
+        type:
+          "fixed"
+
+      })
+    )
+
+  ]
+    .filter(
+      (item) =>
+        item.end >
+        item.start
+    )
+    .sort(
+      (a, b) =>
+        a.start -
+        b.start
+    );
 
 }
 
 
-// ========================================
+// ============================================================
 // メイン
-// ========================================
+// ============================================================
 
 function App() {
 
-  // ------------------------------------
+  // ----------------------------------------------------------
   // State
-  // ------------------------------------
+  // ----------------------------------------------------------
 
   const [
     data,
@@ -576,9 +985,9 @@ function App() {
   ] = useState(30);
 
 
-  // ------------------------------------
+  // ----------------------------------------------------------
   // 固定予定
-  // ------------------------------------
+  // ----------------------------------------------------------
 
   const [
     fixedTitle,
@@ -598,9 +1007,9 @@ function App() {
   ] = useState("21:30");
 
 
-  // ------------------------------------
+  // ----------------------------------------------------------
   // 保存
-  // ------------------------------------
+  // ----------------------------------------------------------
 
   useEffect(() => {
 
@@ -609,9 +1018,9 @@ function App() {
   }, [data]);
 
 
-  // ------------------------------------
+  // ----------------------------------------------------------
   // タイマー
-  // ------------------------------------
+  // ----------------------------------------------------------
 
   useEffect(() => {
 
@@ -642,9 +1051,9 @@ function App() {
   }, [runningId]);
 
 
-  // ====================================
-  // 計算
-  // ====================================
+  // ==========================================================
+  // 基本計算
+  // ==========================================================
 
   const completedTasks =
     data.tasks.filter(
@@ -708,9 +1117,26 @@ function App() {
     );
 
 
-  // ====================================
+  // ==========================================================
+  // Phase 2-②②
+  // 勉強可能時間
+  // ==========================================================
+
+  const availability =
+    useMemo(
+      () =>
+        calculateStudyAvailability(
+          data.settings
+        ),
+      [
+        data.settings
+      ]
+    );
+
+
+  // ==========================================================
   // 自動時間割
-  // ====================================
+  // ==========================================================
 
   const todayPlan =
     useMemo(
@@ -726,9 +1152,39 @@ function App() {
     );
 
 
-  // ====================================
+  // ==========================================================
+  // 未完了タスクの必要時間
+  // ==========================================================
+
+  const remainingMinutes =
+    remainingTasks.reduce(
+      (
+        total,
+        task
+      ) =>
+        total +
+        Number(
+          task.minutes
+        ),
+      0
+    );
+
+
+  const shortageMinutes =
+    Math.max(
+      0,
+      remainingMinutes -
+      availability.availableMinutes
+    );
+
+
+  const enoughTime =
+    shortageMinutes === 0;
+
+
+  // ==========================================================
   // 設定変更
-  // ====================================
+  // ==========================================================
 
   function updateSetting(
     key,
@@ -755,9 +1211,9 @@ function App() {
   }
 
 
-  // ====================================
+  // ==========================================================
   // タスク完了
-  // ====================================
+  // ==========================================================
 
   function toggleTask(
     id
@@ -799,9 +1255,9 @@ function App() {
   }
 
 
-  // ====================================
+  // ==========================================================
   // タイマー
-  // ====================================
+  // ==========================================================
 
   function startTimer(
     task
@@ -873,9 +1329,9 @@ function App() {
   }
 
 
-  // ====================================
+  // ==========================================================
   // タスク追加
-  // ====================================
+  // ==========================================================
 
   function addTask(
     event
@@ -940,9 +1396,9 @@ function App() {
   }
 
 
-  // ====================================
+  // ==========================================================
   // 優先度変更
-  // ====================================
+  // ==========================================================
 
   function updatePriority(
     taskId,
@@ -988,9 +1444,9 @@ function App() {
   }
 
 
-  // ====================================
+  // ==========================================================
   // 固定予定追加
-  // ====================================
+  // ==========================================================
 
   function addFixedSchedule(
     event
@@ -1075,9 +1531,9 @@ function App() {
   }
 
 
-  // ====================================
+  // ==========================================================
   // 固定予定削除
-  // ====================================
+  // ==========================================================
 
   function deleteFixedSchedule(
     id
@@ -1111,9 +1567,9 @@ function App() {
   }
 
 
-  // ====================================
+  // ==========================================================
   // リセット
-  // ====================================
+  // ==========================================================
 
   function resetData() {
 
@@ -1156,18 +1612,17 @@ function App() {
   }
 
 
-  // ====================================
+  // ==========================================================
   // JSX
-  // ====================================
+  // ==========================================================
 
   return (
 
     <div className="app">
 
-
-      {/* ==================================
+      {/* ======================================================
           HEADER
-      ================================== */}
+      ====================================================== */}
 
       <header className="header">
 
@@ -1197,10 +1652,9 @@ function App() {
       </header>
 
 
-
-      {/* ==================================
+      {/* ======================================================
           NAVIGATION
-      ================================== */}
+      ====================================================== */}
 
       <nav className="navigation">
 
@@ -1248,18 +1702,15 @@ function App() {
       </nav>
 
 
-
       <main className="main">
 
-
-        {/* ==================================
+        {/* ====================================================
             TODAY
-        ================================== */}
+        ==================================================== */}
 
         {tab === "today" && (
 
           <>
-
 
             <section
               className="card heroCard"
@@ -1321,6 +1772,153 @@ function App() {
             </section>
 
 
+            {/* ------------------------------------------------
+                勉強可能時間
+            ------------------------------------------------ */}
+
+            <section className="card">
+
+              <span className="eyebrow">
+                AVAILABLE TIME
+              </span>
+
+              <h2>
+                今日あとどれくらい勉強できる？
+              </h2>
+
+
+              <div
+                className="statistics"
+                style={{
+                  marginTop:
+                    "16px"
+                }}
+              >
+
+                <div className="statCard">
+
+                  <span>
+                    勉強可能時間
+                  </span>
+
+                  <b>
+                    {formatDuration(
+                      availability.availableMinutes
+                    )}
+                  </b>
+
+                </div>
+
+
+                <div className="statCard">
+
+                  <span>
+                    残りタスク
+                  </span>
+
+                  <b>
+                    {formatDuration(
+                      remainingMinutes
+                    )}
+                  </b>
+
+                </div>
+
+
+                <div className="statCard">
+
+                  <span>
+                    差
+                  </span>
+
+                  <b>
+                    {enoughTime
+                      ? `+${formatDuration(
+                          availability.availableMinutes -
+                          remainingMinutes
+                        )}`
+                      : `-${formatDuration(
+                          shortageMinutes
+                        )}`}
+                  </b>
+
+                </div>
+
+              </div>
+
+
+              <div className="notice">
+
+                <strong>
+                  自動計算結果
+                </strong>
+
+                <br />
+
+                {formatTime(
+                  availability.actualStart
+                )}
+                から
+                {formatTime(
+                  availability.actualEnd
+                )}
+                までが基本の時間帯です。
+
+                <br />
+
+                固定予定
+                {formatDuration(
+                  availability.fixedMinutes
+                )}
+                を除いて、
+
+                <strong>
+                  実際に勉強できる時間は
+                  {" "}
+                  {formatDuration(
+                    availability.availableMinutes
+                  )}
+                </strong>
+                です。
+
+              </div>
+
+
+              {!enoughTime && (
+
+                <div
+                  className="notice"
+                  style={{
+                    marginTop:
+                      "12px"
+                  }}
+                >
+
+                  ⚠️
+
+                  <strong>
+                    今日の勉強時間が
+                    {formatDuration(
+                      shortageMinutes
+                    )}
+                    足りません。
+                  </strong>
+
+                  <br />
+
+                  優先度の高いタスクから
+                  自動的に時間割へ配置しています。
+
+                </div>
+
+              )}
+
+            </section>
+
+
+            {/* ------------------------------------------------
+                タスク
+            ------------------------------------------------ */}
 
             <section className="card">
 
@@ -1472,6 +2070,9 @@ function App() {
             </section>
 
 
+            {/* ------------------------------------------------
+                タスク追加
+            ------------------------------------------------ */}
 
             <section className="card">
 
@@ -1533,19 +2134,17 @@ function App() {
         )}
 
 
-
-        {/* ==================================
+        {/* ====================================================
             PLAN
-        ================================== */}
+        ==================================================== */}
 
         {tab === "plan" && (
 
           <>
 
-
-            {/* ==================================
+            {/* ------------------------------------------------
                 今日の条件
-            ================================== */}
+            ------------------------------------------------ */}
 
             <section className="card">
 
@@ -1568,8 +2167,8 @@ function App() {
 
               <p className="muted">
 
-                今日の生活予定を入力すると、
-                StudyFlowが勉強できる時間を判断します。
+                生活条件を入力すると、
+                StudyFlowが勉強可能時間を自動計算します。
 
               </p>
 
@@ -1792,7 +2391,7 @@ function App() {
               )}
 
 
-              {/* 勉強時間 */}
+              {/* 基本時間帯 */}
 
               <div
                 style={{
@@ -1802,7 +2401,7 @@ function App() {
               >
 
                 <strong>
-                  今日の勉強可能時間
+                  勉強時間の基本範囲
                 </strong>
 
 
@@ -1863,13 +2462,87 @@ function App() {
 
               </div>
 
+
+              {/* 自動計算結果 */}
+
+              <div
+                className="notice"
+                style={{
+                  marginTop:
+                    "20px"
+                }}
+              >
+
+                <strong>
+                  📊 自動計算
+                </strong>
+
+                <br />
+                起床：
+                {formatTime(
+                  availability.wakeUp
+                )}
+
+                <br />
+                朝の支度終了：
+                {formatTime(
+                  availability.morningPrepEnd
+                )}
+
+                {availability.travel >
+                  0 && (
+                  <>
+                    <br />
+                    移動：
+                    {availability.travel}分
+                  </>
+                )}
+
+                <br />
+
+                実際の勉強開始：
+                <strong>
+                  {" "}
+                  {formatTime(
+                    availability.actualStart
+                  )}
+                </strong>
+
+                <br />
+
+                勉強終了：
+                <strong>
+                  {" "}
+                  {formatTime(
+                    availability.actualEnd
+                  )}
+                </strong>
+
+                <br />
+
+                固定予定：
+                {formatDuration(
+                  availability.fixedMinutes
+                )}
+
+                <br />
+
+                <strong>
+                  実質勉強可能時間：
+                  {" "}
+                  {formatDuration(
+                    availability.availableMinutes
+                  )}
+                </strong>
+
+              </div>
+
             </section>
 
 
-
-            {/* ==================================
-                朝の時間表示
-            ================================== */}
+            {/* ------------------------------------------------
+                朝のスケジュール
+            ------------------------------------------------ */}
 
             <section className="card">
 
@@ -1913,14 +2586,7 @@ function App() {
                   <div className="scheduleTime">
 
                     {formatTime(
-                      timeToMinutes(
-                        data.settings
-                          .wakeUpTime
-                      ) +
-                        Number(
-                          data.settings
-                            .morningPrepMinutes
-                        )
+                      availability.morningPrepEnd
                     )}
 
                   </div>
@@ -1942,26 +2608,61 @@ function App() {
 
                 </div>
 
+
+                {availability.travel >
+                  0 && (
+
+                  <div className="scheduleItem">
+
+                    <div className="scheduleTime">
+
+                      {formatTime(
+                        availability.actualStart
+                      )}
+
+                    </div>
+
+                    <div>
+
+                      <strong>
+                        自習室到着・勉強開始
+                      </strong>
+
+                      <small>
+                        移動
+                        {availability.travel}
+                        分を考慮
+                      </small>
+
+                    </div>
+
+                  </div>
+
+                )}
+
               </div>
 
 
               <div className="notice">
 
-                起床から
-                {data.settings
-                  .morningPrepMinutes}
-                分は、
-                勉強時間としてカウントしません。
+                起床 →
+                朝の支度 →
+                {availability.travel >
+                0
+                  ? "移動 → "
+                  : ""}
+                勉強開始
+
+                の順番で自動計算しています。
 
               </div>
 
             </section>
 
 
-
-            {/* ==================================
+            {/* ------------------------------------------------
                 固定予定
-            ================================== */}
+            ------------------------------------------------ */}
 
             <section className="card">
 
@@ -1986,6 +2687,7 @@ function App() {
 
                 塾・学校・部活など、
                 動かせない予定を登録します。
+                登録した時間は勉強可能時間から自動的に除外されます。
 
               </p>
 
@@ -2135,10 +2837,9 @@ function App() {
             </section>
 
 
-
-            {/* ==================================
+            {/* ------------------------------------------------
                 自動時間割
-            ================================== */}
+            ------------------------------------------------ */}
 
             <section className="card">
 
@@ -2178,14 +2879,14 @@ function App() {
                 ) : (
 
                   todayPlan.map(
-                    (item) => (
+                    (item, index) => (
 
                       <div
                         key={
                           item.type ===
                           "fixed"
                             ? `fixed-${item.id}`
-                            : `task-${item.id}`
+                            : `task-${item.id}-${index}`
                         }
                         className="scheduleItem"
                       >
@@ -2224,7 +2925,7 @@ function App() {
 
                               ? "固定予定"
 
-                              : `${item.subject} ・ ${item.minutes}分 ・ 優先度${item.priority}`}
+                              : `${item.subject} ・ ${item.minutes}分 ・ 優先度${item.priority}${item.split ? " ・ 分割" : ""}`}
 
                           </small>
 
@@ -2243,26 +2944,30 @@ function App() {
               <div className="notice">
 
                 <strong>
-                  現在の自動計画
+                  自動計画の仕組み
                 </strong>
 
                 <br />
 
-                勉強可能時間：
-                {
-                  data.settings
-                    .studyStart
-                }
-                〜
-                {
-                  data.settings
-                    .studyEnd
-                }
+                ① 起床・朝の支度・移動時間から
+                勉強開始可能時刻を計算
 
                 <br />
 
-                固定予定を避けながら、
-                優先度の高いタスクから配置します。
+                ② 固定予定を勉強時間から除外
+
+                <br />
+
+                ③ 残った空き時間を計算
+
+                <br />
+
+                ④ 優先度の高いタスクから順番に配置
+
+                <br />
+
+                ⑤ 入り切らないタスクは
+                自動的に分割
 
               </div>
 
@@ -2273,10 +2978,9 @@ function App() {
         )}
 
 
-
-        {/* ==================================
+        {/* ====================================================
             PROGRESS
-        ================================== */}
+        ==================================================== */}
 
         {tab === "progress" && (
 
@@ -2337,6 +3041,117 @@ function App() {
             </section>
 
 
+            {/* ------------------------------------------------
+                勉強可能時間
+            ------------------------------------------------ */}
+
+            <section className="card">
+
+              <h2>
+                今日の時間分析
+              </h2>
+
+
+              <div className="schedule">
+
+                <div className="scheduleItem">
+
+                  <div className="scheduleTime">
+                    {formatTime(
+                      availability.actualStart
+                    )}
+                  </div>
+
+                  <div>
+
+                    <strong>
+                      勉強開始可能
+                    </strong>
+
+                    <small>
+                      朝の支度・移動を考慮
+                    </small>
+
+                  </div>
+
+                </div>
+
+
+                <div className="scheduleItem">
+
+                  <div className="scheduleTime">
+                    {formatTime(
+                      availability.actualEnd
+                    )}
+                  </div>
+
+                  <div>
+
+                    <strong>
+                      勉強終了
+                    </strong>
+
+                    <small>
+                      設定した終了時刻
+                    </small>
+
+                  </div>
+
+                </div>
+
+              </div>
+
+
+              <div className="statistics">
+
+                <div className="statCard">
+
+                  <span>
+                    基本時間
+                  </span>
+
+                  <b>
+                    {formatDuration(
+                      availability.totalWindowMinutes
+                    )}
+                  </b>
+
+                </div>
+
+
+                <div className="statCard">
+
+                  <span>
+                    固定予定
+                  </span>
+
+                  <b>
+                    {formatDuration(
+                      availability.fixedMinutes
+                    )}
+                  </b>
+
+                </div>
+
+
+                <div className="statCard">
+
+                  <span>
+                    勉強可能
+                  </span>
+
+                  <b>
+                    {formatDuration(
+                      availability.availableMinutes
+                    )}
+                  </b>
+
+                </div>
+
+              </div>
+
+            </section>
+
 
             <section className="card">
 
@@ -2366,7 +3181,6 @@ function App() {
               </p>
 
             </section>
-
 
 
             <section className="card">
@@ -2414,9 +3228,9 @@ function App() {
 }
 
 
-// ========================================
+// ============================================================
 // React起動
-// ========================================
+// ============================================================
 
 createRoot(
   document.getElementById("root")
