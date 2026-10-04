@@ -2,15 +2,14 @@ import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
 
-// StudyFlow Phase 1
+// StudyFlow Phase 2-①
 
 /*
 ========================================
- StudyFlow Phase 1
+ StudyFlow Phase 2-①
 ========================================
 
-実装内容
-
+Phase 1
 ・今日のタスク
 ・タスク完了
 ・達成率
@@ -21,7 +20,15 @@ import "./styles.css";
 ・進捗表示
 ・localStorage保存
 
-Phase 1ではSupabaseは使用しません。
+Phase 2-①
+・勉強開始時刻
+・勉強終了時刻
+・固定予定
+・タスク優先度
+・自動時間割生成
+・localStorage保存
+
+Supabaseはまだ使用しません。
 */
 
 
@@ -29,7 +36,7 @@ Phase 1ではSupabaseは使用しません。
 // localStorage
 // ========================================
 
-const STORAGE_KEY = "studyflow_phase1_v1";
+const STORAGE_KEY = "studyflow_phase2_v1";
 
 
 // ========================================
@@ -85,27 +92,66 @@ const INITIAL_TASKS = [
 
 
 // ========================================
+// 初期設定
+// ========================================
+
+const INITIAL_SETTINGS = {
+  studyStart: "09:00",
+  studyEnd: "22:00",
+
+  fixedSchedules: []
+};
+
+
+// ========================================
 // データ読み込み
 // ========================================
 
 function loadData() {
+
   try {
+
     const saved = JSON.parse(
       localStorage.getItem(STORAGE_KEY)
     );
 
     if (saved && saved.tasks) {
-      return saved;
+
+      return {
+        tasks: saved.tasks || INITIAL_TASKS,
+        actualMinutes: saved.actualMinutes || 0,
+        history: saved.history || [],
+
+        settings: {
+          ...INITIAL_SETTINGS,
+          ...(saved.settings || {})
+        }
+      };
+
     }
+
   } catch (error) {
-    console.error("データ読み込みエラー:", error);
+
+    console.error(
+      "データ読み込みエラー:",
+      error
+    );
+
   }
 
+
   return {
+
     tasks: INITIAL_TASKS,
+
     actualMinutes: 0,
-    history: []
+
+    history: [],
+
+    settings: INITIAL_SETTINGS
+
   };
+
 }
 
 
@@ -114,10 +160,12 @@ function loadData() {
 // ========================================
 
 function saveData(data) {
+
   localStorage.setItem(
     STORAGE_KEY,
     JSON.stringify(data)
   );
+
 }
 
 
@@ -126,12 +174,269 @@ function saveData(data) {
 // ========================================
 
 function getTodayLabel() {
-  return new Intl.DateTimeFormat("ja-JP", {
-    year: "numeric",
-    month: "long",
-    day: "numeric",
-    weekday: "short"
-  }).format(new Date());
+
+  return new Intl.DateTimeFormat(
+    "ja-JP",
+    {
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+      weekday: "short"
+    }
+  ).format(new Date());
+
+}
+
+
+// ========================================
+// 時刻 → 分
+// ========================================
+
+function timeToMinutes(time) {
+
+  const [hours, minutes] =
+    time.split(":").map(Number);
+
+  return hours * 60 + minutes;
+
+}
+
+
+// ========================================
+// 分 → 時刻
+// ========================================
+
+function formatTime(minutes) {
+
+  const normalized =
+    ((minutes % 1440) + 1440) % 1440;
+
+  const hours =
+    Math.floor(normalized / 60);
+
+  const mins =
+    normalized % 60;
+
+  return (
+    String(hours).padStart(2, "0") +
+    ":" +
+    String(mins).padStart(2, "0")
+  );
+
+}
+
+
+// ========================================
+// タイマー表示
+// ========================================
+
+function formatTimer(totalSeconds) {
+
+  const minutes =
+    Math.floor(totalSeconds / 60);
+
+  const seconds =
+    totalSeconds % 60;
+
+  return (
+    String(minutes).padStart(2, "0") +
+    ":" +
+    String(seconds).padStart(2, "0")
+  );
+
+}
+
+
+// ========================================
+// 予定の重なり判定
+// ========================================
+
+function overlaps(
+  start,
+  end,
+  schedules
+) {
+
+  return schedules.some(
+    (schedule) => {
+
+      return (
+        start < schedule.end &&
+        end > schedule.start
+      );
+
+    }
+  );
+
+}
+
+
+// ========================================
+// 自動時間割生成
+// ========================================
+
+function createAutoSchedule(
+  tasks,
+  settings
+) {
+
+  const studyStart =
+    timeToMinutes(
+      settings.studyStart
+    );
+
+  const studyEnd =
+    timeToMinutes(
+      settings.studyEnd
+    );
+
+
+  // 開始と終了が逆の場合
+  if (studyEnd <= studyStart) {
+    return [];
+  }
+
+
+  // 固定予定を時間順に並べる
+  const fixedSchedules =
+    (settings.fixedSchedules || [])
+      .map((schedule) => ({
+        ...schedule,
+        start:
+          timeToMinutes(
+            schedule.start
+          ),
+        end:
+          timeToMinutes(
+            schedule.end
+          ),
+        type: "fixed"
+      }))
+      .filter(
+        (schedule) =>
+          schedule.end > schedule.start
+      )
+      .sort(
+        (a, b) =>
+          a.start - b.start
+      );
+
+
+  // 未完了タスクだけを対象にする
+  // 優先度の高い順
+  const unscheduledTasks =
+    tasks
+      .filter(
+        (task) => !task.done
+      )
+      .sort(
+        (a, b) => {
+
+          if (
+            Number(b.priority) !==
+            Number(a.priority)
+          ) {
+
+            return (
+              Number(b.priority) -
+              Number(a.priority)
+            );
+
+          }
+
+          return (
+            Number(b.minutes) -
+            Number(a.minutes)
+          );
+
+        }
+      );
+
+
+  const result = [];
+
+  let current =
+    studyStart;
+
+
+  // 空いている場所を探す関数
+  function findNextAvailable(
+    start,
+    duration
+  ) {
+
+    let candidate = start;
+
+    while (candidate + duration <= studyEnd) {
+
+      const conflicting =
+        fixedSchedules.find(
+          (schedule) =>
+            candidate < schedule.end &&
+            candidate + duration >
+              schedule.start
+        );
+
+
+      if (!conflicting) {
+        return candidate;
+      }
+
+
+      candidate =
+        conflicting.end;
+
+    }
+
+    return null;
+
+  }
+
+
+  for (const task of unscheduledTasks) {
+
+    const duration =
+      Number(task.minutes) || 30;
+
+
+    const start =
+      findNextAvailable(
+        current,
+        duration
+      );
+
+
+    if (start === null) {
+      break;
+    }
+
+
+    const end =
+      start + duration;
+
+
+    result.push({
+      ...task,
+      start,
+      end,
+      type: "task"
+    });
+
+
+    current = end;
+
+  }
+
+
+  // 固定予定と勉強予定をまとめて時間順にする
+  return [
+    ...result,
+    ...fixedSchedules
+  ].sort(
+    (a, b) =>
+      a.start - b.start
+  );
+
 }
 
 
@@ -141,21 +446,46 @@ function getTodayLabel() {
 
 function App() {
 
+
   // ------------------------------------
   // State
   // ------------------------------------
 
-  const [data, setData] = useState(loadData);
+  const [data, setData] =
+    useState(loadData);
 
-  const [tab, setTab] = useState("today");
 
-  const [runningId, setRunningId] = useState(null);
+  const [tab, setTab] =
+    useState("today");
 
-  const [seconds, setSeconds] = useState(0);
 
-  const [newTitle, setNewTitle] = useState("");
+  const [runningId, setRunningId] =
+    useState(null);
 
-  const [newMinutes, setNewMinutes] = useState(30);
+
+  const [seconds, setSeconds] =
+    useState(0);
+
+
+  const [newTitle, setNewTitle] =
+    useState("");
+
+
+  const [newMinutes, setNewMinutes] =
+    useState(30);
+
+
+  // 固定予定入力
+  const [fixedTitle, setFixedTitle] =
+    useState("");
+
+
+  const [fixedStart, setFixedStart] =
+    useState("19:20");
+
+
+  const [fixedEnd, setFixedEnd] =
+    useState("21:30");
 
 
   // ------------------------------------
@@ -163,7 +493,9 @@ function App() {
   // ------------------------------------
 
   useEffect(() => {
+
     saveData(data);
+
   }, [data]);
 
 
@@ -177,15 +509,22 @@ function App() {
       return;
     }
 
-    const timer = setInterval(() => {
 
-      setSeconds((current) => current + 1);
+    const timer =
+      setInterval(() => {
 
-    }, 1000);
+        setSeconds(
+          (current) =>
+            current + 1
+        );
+
+      }, 1000);
 
 
     return () => {
+
       clearInterval(timer);
+
     };
 
   }, [runningId]);
@@ -209,24 +548,30 @@ function App() {
     totalTasks === 0
       ? 0
       : Math.round(
-          (completedTasks / totalTasks) * 100
+          (completedTasks /
+            totalTasks) *
+            100
         );
 
 
   const plannedMinutes =
     data.tasks.reduce(
       (total, task) =>
-        total + Number(task.minutes),
+        total +
+        Number(task.minutes),
       0
     );
 
 
   const completedTaskMinutes =
     data.tasks
-      .filter((task) => task.done)
+      .filter(
+        (task) => task.done
+      )
       .reduce(
         (total, task) =>
-          total + Number(task.minutes),
+          total +
+          Number(task.minutes),
         0
       );
 
@@ -238,30 +583,20 @@ function App() {
 
 
   // ====================================
-  // 今日の時間割
+  // 自動時間割
   // ====================================
 
   const todayPlan = useMemo(() => {
 
-    let currentMinutes = 9 * 60;
+    return createAutoSchedule(
+      data.tasks,
+      data.settings
+    );
 
-    return data.tasks.map((task) => {
-
-      const start = currentMinutes;
-
-      currentMinutes += Number(task.minutes);
-
-      const end = currentMinutes;
-
-      return {
-        ...task,
-        start,
-        end
-      };
-
-    });
-
-  }, [data.tasks]);
+  }, [
+    data.tasks,
+    data.settings
+  ]);
 
 
   // ====================================
@@ -274,18 +609,25 @@ function App() {
 
       ...current,
 
-      tasks: current.tasks.map((task) => {
+      tasks:
+        current.tasks.map(
+          (task) => {
 
-        if (task.id !== id) {
-          return task;
-        }
+            if (
+              task.id !== id
+            ) {
+              return task;
+            }
 
-        return {
-          ...task,
-          done: !task.done
-        };
 
-      })
+            return {
+              ...task,
+              done:
+                !task.done
+            };
+
+          }
+        )
 
     }));
 
@@ -298,35 +640,57 @@ function App() {
 
   function startTimer(task) {
 
-    // 現在動いているタイマーを停止
-    if (runningId === task.id) {
+
+    // 同じタスクを押した場合 → 停止
+    if (
+      runningId === task.id
+    ) {
 
       const earnedMinutes =
         Math.max(
           1,
-          Math.round(seconds / 60)
+          Math.round(
+            seconds / 60
+          )
         );
 
+
       setData((current) => ({
+
         ...current,
+
         actualMinutes:
           current.actualMinutes +
           earnedMinutes
+
       }));
+
 
       setRunningId(null);
 
       setSeconds(0);
 
       return;
+
     }
 
 
-    // 別のタスクのタイマーが動いていたら
-    // いったんリセット
+    // 別のタイマーが動いている場合
+    if (runningId) {
+
+      window.alert(
+        "現在別のタスクのタイマーが動いています。先に停止してください。"
+      );
+
+      return;
+
+    }
+
+
     setRunningId(task.id);
 
     setSeconds(0);
+
   }
 
 
@@ -346,18 +710,24 @@ function App() {
 
     const newTask = {
 
-      id: crypto.randomUUID(),
+      id:
+        crypto.randomUUID(),
 
-      subject: "追加",
+      subject:
+        "追加",
 
-      title: newTitle.trim(),
+      title:
+        newTitle.trim(),
 
       minutes:
-        Number(newMinutes) || 30,
+        Number(newMinutes) ||
+        30,
 
-      priority: 2,
+      priority:
+        2,
 
-      done: false
+      done:
+        false
 
     };
 
@@ -380,14 +750,189 @@ function App() {
 
 
   // ====================================
+  // 優先度変更
+  // ====================================
+
+  function updatePriority(
+    taskId,
+    priority
+  ) {
+
+    setData((current) => ({
+
+      ...current,
+
+      tasks:
+        current.tasks.map(
+          (task) => {
+
+            if (
+              task.id !== taskId
+            ) {
+              return task;
+            }
+
+
+            return {
+              ...task,
+              priority:
+                Number(priority)
+            };
+
+          }
+        )
+
+    }));
+
+  }
+
+
+  // ====================================
+  // 勉強時間変更
+  // ====================================
+
+  function updateStudyTime(
+    field,
+    value
+  ) {
+
+    setData((current) => ({
+
+      ...current,
+
+      settings: {
+
+        ...current.settings,
+
+        [field]: value
+
+      }
+
+    }));
+
+  }
+
+
+  // ====================================
+  // 固定予定追加
+  // ====================================
+
+  function addFixedSchedule(
+    event
+  ) {
+
+    event.preventDefault();
+
+
+    if (
+      !fixedTitle.trim()
+    ) {
+      return;
+    }
+
+
+    if (
+      timeToMinutes(
+        fixedEnd
+      ) <=
+      timeToMinutes(
+        fixedStart
+      )
+    ) {
+
+      window.alert(
+        "終了時刻は開始時刻より後にしてください。"
+      );
+
+      return;
+
+    }
+
+
+    const newSchedule = {
+
+      id:
+        crypto.randomUUID(),
+
+      title:
+        fixedTitle.trim(),
+
+      start:
+        fixedStart,
+
+      end:
+        fixedEnd
+
+    };
+
+
+    setData((current) => ({
+
+      ...current,
+
+      settings: {
+
+        ...current.settings,
+
+        fixedSchedules: [
+          ...(current.settings
+            .fixedSchedules || []),
+
+          newSchedule
+        ]
+
+      }
+
+    }));
+
+
+    setFixedTitle("");
+
+  }
+
+
+  // ====================================
+  // 固定予定削除
+  // ====================================
+
+  function deleteFixedSchedule(
+    id
+  ) {
+
+    setData((current) => ({
+
+      ...current,
+
+      settings: {
+
+        ...current.settings,
+
+        fixedSchedules:
+          (
+            current.settings
+              .fixedSchedules || []
+          ).filter(
+            (schedule) =>
+              schedule.id !== id
+          )
+
+      }
+
+    }));
+
+  }
+
+
+  // ====================================
   // データリセット
   // ====================================
 
   function resetData() {
 
-    const answer = window.confirm(
-      "StudyFlow Phase 1の保存データをリセットしますか？"
-    );
+    const answer =
+      window.confirm(
+        "StudyFlowの保存データをリセットしますか？"
+      );
 
 
     if (!answer) {
@@ -397,11 +942,17 @@ function App() {
 
     setData({
 
-      tasks: INITIAL_TASKS,
+      tasks:
+        INITIAL_TASKS,
 
-      actualMinutes: 0,
+      actualMinutes:
+        0,
 
-      history: []
+      history:
+        [],
+
+      settings:
+        INITIAL_SETTINGS
 
     });
 
@@ -409,50 +960,6 @@ function App() {
     setRunningId(null);
 
     setSeconds(0);
-
-  }
-
-
-  // ====================================
-  // 時刻表示
-  // ====================================
-
-  function formatTime(minutes) {
-
-    const hours =
-      Math.floor(minutes / 60) % 24;
-
-    const mins =
-      minutes % 60;
-
-
-    return (
-      String(hours).padStart(2, "0") +
-      ":" +
-      String(mins).padStart(2, "0")
-    );
-
-  }
-
-
-  // ====================================
-  // タイマー表示
-  // ====================================
-
-  function formatTimer(totalSeconds) {
-
-    const minutes =
-      Math.floor(totalSeconds / 60);
-
-    const seconds =
-      totalSeconds % 60;
-
-
-    return (
-      String(minutes).padStart(2, "0") +
-      ":" +
-      String(seconds).padStart(2, "0")
-    );
 
   }
 
@@ -490,7 +997,7 @@ function App() {
 
 
           <p>
-            Phase 1：タスク → 時間割 → タイマー → 完了 → 進捗
+            Phase 2：予定を入力 → 自動で時間割を作成
           </p>
 
         </div>
@@ -511,7 +1018,9 @@ function App() {
               ? "navButton active"
               : "navButton"
           }
-          onClick={() => setTab("today")}
+          onClick={() =>
+            setTab("today")
+          }
         >
           今日
         </button>
@@ -523,7 +1032,9 @@ function App() {
               ? "navButton active"
               : "navButton"
           }
-          onClick={() => setTab("plan")}
+          onClick={() =>
+            setTab("plan")
+          }
         >
           時間割
         </button>
@@ -535,7 +1046,9 @@ function App() {
               ? "navButton active"
               : "navButton"
           }
-          onClick={() => setTab("progress")}
+          onClick={() =>
+            setTab("progress")
+          }
         >
           進捗
         </button>
@@ -558,7 +1071,9 @@ function App() {
 
             {/* 達成状況 */}
 
-            <section className="card heroCard">
+            <section
+              className="card heroCard"
+            >
 
               <div className="row">
 
@@ -575,7 +1090,9 @@ function App() {
                 </div>
 
 
-                <strong className="bigNumber">
+                <strong
+                  className="bigNumber"
+                >
                   {progress}%
                 </strong>
 
@@ -586,7 +1103,8 @@ function App() {
 
                 <span
                   style={{
-                    width: `${progress}%`
+                    width:
+                      `${progress}%`
                   }}
                 />
 
@@ -633,67 +1151,131 @@ function App() {
 
               <div className="tasks">
 
-                {data.tasks.map((task) => (
+                {data.tasks.map(
+                  (task) => (
 
-                  <div
-                    key={task.id}
-                    className={
-                      task.done
-                        ? "task done"
-                        : "task"
-                    }
-                  >
-
-
-                    <input
-                      type="checkbox"
-                      checked={task.done}
-                      onChange={() =>
-                        toggleTask(task.id)
+                    <div
+                      key={task.id}
+                      className={
+                        task.done
+                          ? "task done"
+                          : "task"
                       }
-                    />
+                    >
+
+                      <input
+                        type="checkbox"
+                        checked={
+                          task.done
+                        }
+                        onChange={() =>
+                          toggleTask(
+                            task.id
+                          )
+                        }
+                      />
 
 
-                    <div className="taskMain">
+                      <div className="taskMain">
 
-                      <span className="tag">
-                        {task.subject}
-                      </span>
+                        <span className="tag">
+                          {task.subject}
+                        </span>
 
 
-                      <div className="taskTitle">
-                        {task.title}
+                        <div className="taskTitle">
+                          {task.title}
+                        </div>
+
+
+                        <div className="muted">
+                          {task.minutes}分
+                        </div>
+
                       </div>
 
 
-                      <div className="muted">
-                        {task.minutes}分
+                      <div
+                        style={{
+                          display:
+                            "flex",
+                          flexDirection:
+                            "column",
+                          alignItems:
+                            "flex-end",
+                          gap:
+                            "4px"
+                        }}
+                      >
+
+                        <select
+                          value={
+                            task.priority
+                          }
+                          onChange={(event) =>
+                            updatePriority(
+                              task.id,
+                              event.target.value
+                            )
+                          }
+                          aria-label="優先度"
+                          style={{
+                            width:
+                              "auto",
+                            minWidth:
+                              "52px"
+                          }}
+                        >
+
+                          <option value="5">
+                            優先5
+                          </option>
+
+                          <option value="4">
+                            優先4
+                          </option>
+
+                          <option value="3">
+                            優先3
+                          </option>
+
+                          <option value="2">
+                            優先2
+                          </option>
+
+                          <option value="1">
+                            優先1
+                          </option>
+
+                        </select>
+
+
+                        <button
+                          className="timerButton"
+                          onClick={() =>
+                            startTimer(
+                              task
+                            )
+                          }
+                        >
+
+                          {runningId ===
+                          task.id
+
+                            ? `停止 ${formatTimer(
+                                seconds
+                              )}`
+
+                            : "開始"}
+
+                        </button>
+
                       </div>
 
                     </div>
 
-
-                    <button
-                      className="timerButton"
-                      onClick={() =>
-                        startTimer(task)
-                      }
-                    >
-
-                      {runningId === task.id
-
-                        ? `停止 ${formatTimer(seconds)}`
-
-                        : "開始"
-
-                      }
-
-                    </button>
-
-
-                  </div>
-
-                ))}
+                  )
+                )}
 
               </div>
 
@@ -762,88 +1344,377 @@ function App() {
 
         {tab === "plan" && (
 
-          <section className="card">
+          <>
 
-            <div className="row">
 
-              <div>
+            {/* 勉強時間設定 */}
 
-                <span className="eyebrow">
-                  PLAN
-                </span>
+            <section className="card">
 
-                <h2>
-                  今日の時間割
-                </h2>
+              <div className="row">
+
+                <div>
+
+                  <span className="eyebrow">
+                    SETTINGS
+                  </span>
+
+                  <h2>
+                    勉強できる時間
+                  </h2>
+
+                </div>
 
               </div>
 
 
-              <span className="muted">
-                09:00開始の仮プラン
-              </span>
+              <p className="muted">
 
-            </div>
+                今日、実際に勉強できる時間を設定してください。
+                自動時間割はこの範囲内で作成されます。
 
-
-            <div className="schedule">
-
-              {todayPlan.map((task) => (
-
-                <div
-                  key={task.id}
-                  className={
-                    task.done
-                      ? "scheduleItem done"
-                      : "scheduleItem"
-                  }
-                >
-
-                  <div className="scheduleTime">
-
-                    {formatTime(task.start)}
-                    {"–"}
-                    {formatTime(task.end)}
-
-                  </div>
+              </p>
 
 
-                  <div>
+              <div
+                className="addForm"
+              >
 
-                    <strong>
-                      {task.title}
-                    </strong>
+                <label>
+
+                  開始
+
+                  <input
+                    type="time"
+                    value={
+                      data.settings
+                        .studyStart
+                    }
+                    onChange={(event) =>
+                      updateStudyTime(
+                        "studyStart",
+                        event.target.value
+                      )
+                    }
+                  />
+
+                </label>
 
 
-                    <small>
-                      {task.subject}
-                      {" ・ "}
-                      {task.minutes}分
-                    </small>
+                <label>
 
-                  </div>
+                  終了
+
+                  <input
+                    type="time"
+                    value={
+                      data.settings
+                        .studyEnd
+                    }
+                    onChange={(event) =>
+                      updateStudyTime(
+                        "studyEnd",
+                        event.target.value
+                      )
+                    }
+                  />
+
+                </label>
+
+              </div>
+
+            </section>
+
+
+
+            {/* 固定予定 */}
+
+            <section className="card">
+
+              <div className="row">
+
+                <div>
+
+                  <span className="eyebrow">
+                    FIXED
+                  </span>
+
+                  <h2>
+                    固定予定
+                  </h2>
 
                 </div>
 
-              ))}
-
-            </div>
+              </div>
 
 
-            <div className="notice">
+              <p className="muted">
 
-              Phase 2では、
+                塾・学校・部活など、
+                動かせない予定を登録します。
 
-              <strong>
-                起床時刻・朝の支度70分・自習室への移動40分・空き時間
-              </strong>
+              </p>
 
-              などを入力すると、
-              この時間割を自動的に組み直せるようにします。
 
-            </div>
+              <form
+                className="addForm"
+                onSubmit={
+                  addFixedSchedule
+                }
+              >
 
-          </section>
+                <input
+                  value={fixedTitle}
+                  onChange={(event) =>
+                    setFixedTitle(
+                      event.target.value
+                    )
+                  }
+                  placeholder="例：塾"
+                />
+
+
+                <input
+                  type="time"
+                  value={fixedStart}
+                  onChange={(event) =>
+                    setFixedStart(
+                      event.target.value
+                    )
+                  }
+                />
+
+
+                <input
+                  type="time"
+                  value={fixedEnd}
+                  onChange={(event) =>
+                    setFixedEnd(
+                      event.target.value
+                    )
+                  }
+                />
+
+
+                <button
+                  className="primaryButton"
+                  type="submit"
+                >
+                  追加
+                </button>
+
+              </form>
+
+
+              {(data.settings
+                .fixedSchedules || []
+              ).length > 0 && (
+
+                <div
+                  style={{
+                    marginTop:
+                      "16px"
+                  }}
+                >
+
+                  {data.settings
+                    .fixedSchedules
+                    .map(
+                      (schedule) => (
+
+                        <div
+                          key={
+                            schedule.id
+                          }
+                          className="scheduleItem"
+                          style={{
+                            marginBottom:
+                              "8px"
+                          }}
+                        >
+
+                          <div className="scheduleTime">
+
+                            {schedule.start}
+                            {"–"}
+                            {schedule.end}
+
+                          </div>
+
+
+                          <div
+                            style={{
+                              flex:
+                                1
+                            }}
+                          >
+
+                            <strong>
+                              {schedule.title}
+                            </strong>
+
+                          </div>
+
+
+                          <button
+                            className="dangerButton"
+                            onClick={() =>
+                              deleteFixedSchedule(
+                                schedule.id
+                              )
+                            }
+                          >
+                            削除
+                          </button>
+
+                        </div>
+
+                      )
+                    )}
+
+                </div>
+
+              )}
+
+            </section>
+
+
+
+            {/* 自動時間割 */}
+
+            <section className="card">
+
+              <div className="row">
+
+                <div>
+
+                  <span className="eyebrow">
+                    AUTO PLAN
+                  </span>
+
+                  <h2>
+                    今日の時間割
+                  </h2>
+
+                </div>
+
+
+                <span className="muted">
+                  優先度順で自動作成
+                </span>
+
+              </div>
+
+
+              <div className="schedule">
+
+                {todayPlan.length ===
+                0 ? (
+
+                  <p className="muted">
+                    勉強時間内に配置できる
+                    未完了タスクがありません。
+                  </p>
+
+                ) : (
+
+                  todayPlan.map(
+                    (item) => (
+
+                      <div
+                        key={
+                          item.type ===
+                          "fixed"
+                            ? `fixed-${item.id}`
+                            : `task-${item.id}`
+                        }
+                        className={
+                          item.type ===
+                          "fixed"
+                            ? "scheduleItem"
+                            : item.done
+                              ? "scheduleItem done"
+                              : "scheduleItem"
+                        }
+                      >
+
+                        <div className="scheduleTime">
+
+                          {formatTime(
+                            item.start
+                          )}
+
+                          {"–"}
+
+                          {formatTime(
+                            item.end
+                          )}
+
+                        </div>
+
+
+                        <div>
+
+                          <strong>
+
+                            {item.type ===
+                            "fixed"
+                              ? `📌 ${item.title}`
+                              : item.title}
+
+                          </strong>
+
+
+                          <small>
+
+                            {item.type ===
+                            "fixed"
+
+                              ? "固定予定"
+
+                              : `${item.subject} ・ ${item.minutes}分 ・ 優先度${item.priority}`}
+
+                          </small>
+
+                        </div>
+
+                      </div>
+
+                    )
+                  )
+
+                )}
+
+              </div>
+
+
+              <div className="notice">
+
+                <strong>
+                  自動時間割の仕組み
+                </strong>
+
+                <br />
+
+                ① 勉強できる時間を確認
+
+                <br />
+
+                ② 固定予定を先に確保
+
+                <br />
+
+                ③ 未完了タスクを優先度順に並べる
+
+                <br />
+
+                ④ 固定予定と重ならない場所に配置
+
+              </div>
+
+            </section>
+
+          </>
 
         )}
 
@@ -925,7 +1796,8 @@ function App() {
 
                 <span
                   style={{
-                    width: `${progress}%`
+                    width:
+                      `${progress}%`
                   }}
                 />
 
@@ -953,7 +1825,7 @@ function App() {
 
               <p className="muted">
 
-                Phase 1では、
+                StudyFlowでは、
                 データをブラウザの
                 localStorageに保存しています。
 
@@ -969,7 +1841,7 @@ function App() {
                 className="dangerButton"
                 onClick={resetData}
               >
-                Phase 1データをリセット
+                StudyFlowデータをリセット
               </button>
 
             </section>
