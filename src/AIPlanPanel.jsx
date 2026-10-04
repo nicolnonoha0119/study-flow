@@ -1,3 +1,4 @@
+```jsx
 import React, { useState } from "react";
 import { generateAIPlan } from "./gemini";
 
