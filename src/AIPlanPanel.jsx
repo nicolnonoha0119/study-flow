@@ -2,7 +2,7 @@
 import React, { useState } from "react";
 import { generateAIPlan } from "./gemini";
 
-function AIPlanPanel({
+export default function AIPlanPanel({
   date,
   tasks,
   fixedSchedules,
@@ -17,7 +17,6 @@ function AIPlanPanel({
 
   const handleGenerate = async () => {
     setAiError("");
-    setAiResult(null);
     setAiLoading(true);
 
     try {
@@ -32,7 +31,7 @@ function AIPlanPanel({
 
       setAiResult(result);
     } catch (error) {
-      console.error("AI plan error:", error);
+      console.error(error);
 
       setAiError(
         error?.message ||
@@ -44,28 +43,46 @@ function AIPlanPanel({
   };
 
   const handleAdopt = () => {
-    if (!aiResult?.plan?.length) return;
+    if (!aiResult || !Array.isArray(aiResult.plan)) {
+      return;
+    }
 
-    if (typeof onAdopt === "function") {
+    if (aiResult.plan.length === 0) {
+      return;
+    }
+
+    if (onAdopt) {
       onAdopt(aiResult.plan);
     }
   };
 
   const hasPlan =
-    Array.isArray(aiResult?.plan) &&
+    aiResult &&
+    Array.isArray(aiResult.plan) &&
     aiResult.plan.length > 0;
 
   const hasRemaining =
-    Array.isArray(aiResult?.remainingTasks) &&
+    aiResult &&
+    Array.isArray(aiResult.remainingTasks) &&
     aiResult.remainingTasks.length > 0;
+
+  const planCount = hasPlan
+    ? String(aiResult.plan.length) + "件を提案"
+    : "分析完了";
 
   return (
     <section className="ai-plan-panel">
+
+      {/* AI HEADER */}
       <div className="ai-hero">
-        <div className="ai-hero-icon">✦</div>
+        <div className="ai-hero-icon">
+          ✦
+        </div>
 
         <div className="ai-hero-content">
-          <div className="ai-eyebrow">GEMINI AI</div>
+          <div className="ai-eyebrow">
+            GEMINI AI
+          </div>
 
           <h2>
             学習計画を
@@ -84,10 +101,14 @@ function AIPlanPanel({
         </div>
       </div>
 
+      {/* INPUT */}
       <div className="ai-input-card">
         <div className="ai-input-header">
           <div>
-            <strong>AIへの要望</strong>
+            <strong>
+              AIへの要望
+            </strong>
+
             <span>
               今日の状況や希望を自由に入力できます
             </span>
@@ -101,7 +122,9 @@ function AIPlanPanel({
         <textarea
           id="ai-user-message"
           value={userMessage}
-          onChange={(e) => setUserMessage(e.target.value)}
+          onChange={(event) => {
+            setUserMessage(event.target.value);
+          }}
           placeholder={
             "例：今日は数学を多めにしたい\n" +
             "例：17時以降は勉強したくない\n" +
@@ -130,7 +153,7 @@ function AIPlanPanel({
               </>
             ) : (
               <>
-                ✦
+                <span>✦</span>
                 <span>AIで計画を作成</span>
               </>
             )}
@@ -138,50 +161,66 @@ function AIPlanPanel({
         </div>
       </div>
 
+      {/* ERROR */}
       {aiError && (
         <div className="ai-error">
-          <div className="ai-error-icon">!</div>
+          <div className="ai-error-icon">
+            !
+          </div>
 
           <div>
             <strong>
               AI計画を作成できませんでした
             </strong>
 
-            <p>{aiError}</p>
+            <p>
+              {aiError}
+            </p>
           </div>
         </div>
       )}
 
+      {/* RESULT */}
       {aiResult && !aiError && (
         <div className="ai-result">
+
+          {/* RESULT HEADER */}
           <div className="ai-result-header">
             <div className="ai-result-heading">
-              <div className="ai-result-icon">✦</div>
+              <div className="ai-result-icon">
+                ✦
+              </div>
 
               <div>
                 <div className="ai-result-eyebrow">
                   AI ANALYSIS
                 </div>
 
-                <h3>AIからの提案</h3>
+                <h3>
+                  AIからの提案
+                </h3>
               </div>
             </div>
 
             <div className="ai-result-badge">
-              {hasPlan
-                ? `${aiResult.plan.length}件を提案`
-                : "分析完了"}
+              {planCount}
             </div>
           </div>
 
+          {/* SUMMARY */}
           {aiResult.summary && (
             <div className="ai-summary">
-              <div className="ai-summary-mark">“</div>
+              <div className="ai-summary-mark">
+                “
+              </div>
 
-              <p>{aiResult.summary}</p>
+              <p>
+                {aiResult.summary}
+              </p>
             </div>
           )}
 
+          {/* ADVICE */}
           {aiResult.advice && (
             <div className="ai-advice">
               <div className="ai-advice-icon">
@@ -189,15 +228,21 @@ function AIPlanPanel({
               </div>
 
               <div>
-                <strong>AIからのアドバイス</strong>
+                <strong>
+                  AIからのアドバイス
+                </strong>
 
-                <p>{aiResult.advice}</p>
+                <p>
+                  {aiResult.advice}
+                </p>
               </div>
             </div>
           )}
 
+          {/* SCHEDULE */}
           {hasPlan && (
             <div className="ai-schedule-section">
+
               <div className="ai-section-title">
                 <div>
                   <strong>
@@ -210,7 +255,7 @@ function AIPlanPanel({
                 </div>
 
                 <span className="ai-section-count">
-                  {aiResult.plan.length} TASK
+                  {String(aiResult.plan.length)} TASK
                 </span>
               </div>
 
@@ -218,16 +263,28 @@ function AIPlanPanel({
                 {aiResult.plan.map((item, index) => (
                   <div
                     className="ai-schedule-item"
-                    key={`${item.start}-${item.end}-${index}`}
+                    key={
+                      String(item.start || "") +
+                      "-" +
+                      String(item.end || "") +
+                      "-" +
+                      String(index)
+                    }
                   >
                     <div className="ai-schedule-number">
                       {String(index + 1).padStart(2, "0")}
                     </div>
 
                     <div className="ai-time">
-                      <strong>{item.start}</strong>
+                      <strong>
+                        {item.start || "--:--"}
+                      </strong>
+
                       <span>—</span>
-                      <strong>{item.end}</strong>
+
+                      <strong>
+                        {item.end || "--:--"}
+                      </strong>
                     </div>
 
                     <div className="ai-schedule-line" />
@@ -246,7 +303,9 @@ function AIPlanPanel({
                       </div>
 
                       {item.reason && (
-                        <small>{item.reason}</small>
+                        <small>
+                          {item.reason}
+                        </small>
                       )}
                     </div>
                   </div>
@@ -255,8 +314,10 @@ function AIPlanPanel({
             </div>
           )}
 
+          {/* REMAINING */}
           {hasRemaining && (
             <div className="ai-remaining">
+
               <div className="ai-remaining-header">
                 <div className="ai-remaining-icon">
                   !
@@ -278,11 +339,15 @@ function AIPlanPanel({
                   (item, index) => (
                     <div
                       className="ai-remaining-item"
-                      key={`${item.title}-${index}`}
+                      key={
+                        String(item.title || "task") +
+                        "-" +
+                        String(index)
+                      }
                     >
                       <div>
                         <strong>
-                          {item.title}
+                          {item.title || "未完了タスク"}
                         </strong>
 
                         {item.reason && (
@@ -293,7 +358,7 @@ function AIPlanPanel({
                       </div>
 
                       <span>
-                        {item.minutes}分
+                        {String(item.minutes || 0)}分
                       </span>
                     </div>
                   )
@@ -302,8 +367,10 @@ function AIPlanPanel({
             </div>
           )}
 
+          {/* ADOPT */}
           {hasPlan && (
             <div className="ai-adopt-area">
+
               <div>
                 <strong>
                   この計画で勉強しますか？
@@ -322,13 +389,14 @@ function AIPlanPanel({
                 <span>✓</span>
                 この計画を採用
               </button>
+
             </div>
           )}
+
         </div>
       )}
+
     </section>
   );
 }
-
-export default AIPlanPanel;
 ```
