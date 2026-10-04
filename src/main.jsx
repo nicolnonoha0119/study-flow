@@ -6,6 +6,7 @@ import React, {
 } from "react";
 import { createRoot } from "react-dom/client";
 import { supabase } from "./supabase";
+import AIPlanPanel from "./AIPlanPanel";
 import "./styles.css";
 
 /*
@@ -700,6 +701,8 @@ function AuthScreen() {
   const [nickname, setNickname] = useState("");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
+  const [aiAdoptedPlan, setAiAdoptedPlan] =
+  useState(null);
 
   const submit = async (event) => {
     event.preventDefault();
@@ -1880,6 +1883,106 @@ function App() {
       fixedSchedules,
     ]
   );
+/*
+================================================
+Gemini AI plan
+================================================
+*/
+
+const currentPlanForAI =
+  aiAdoptedPlan || planData.plan;
+
+const handleAdoptAIPlan = useCallback(
+  (aiPlan) => {
+    if (!Array.isArray(aiPlan)) {
+      return;
+    }
+
+    const normalizedPlan = aiPlan
+      .map((item, index) => {
+        const start =
+          typeof item.start === "number"
+            ? item.start
+            : timeToMinutes(item.start);
+
+        const end =
+          typeof item.end === "number"
+            ? item.end
+            : timeToMinutes(item.end);
+
+        if (
+          !Number.isFinite(start) ||
+          !Number.isFinite(end) ||
+          end <= start
+        ) {
+          return null;
+        }
+
+        const matchedTask = tasks.find(
+          (task) => {
+            if (item.taskId) {
+              return task.id === item.taskId;
+            }
+
+            if (
+              item.taskTitle &&
+              task.title === item.taskTitle
+            ) {
+              return true;
+            }
+
+            if (
+              item.title &&
+              task.title === item.title
+            ) {
+              return true;
+            }
+
+            return false;
+          }
+        );
+
+        return {
+          id: `ai-${Date.now()}-${index}`,
+          taskId:
+            item.taskId ||
+            matchedTask?.id ||
+            null,
+          title:
+            item.taskTitle ||
+            item.title ||
+            matchedTask?.title ||
+            "学習",
+          subject:
+            item.subject ||
+            matchedTask?.subject ||
+            "その他",
+          priority:
+            Number(
+              item.priority ??
+                matchedTask?.priority ??
+                3
+            ),
+          start,
+          end,
+          minutes:
+            Number(item.minutes) ||
+            end - start,
+          reason: item.reason || "",
+          type: item.type || "study",
+          aiGenerated: true,
+        };
+      })
+      .filter(Boolean);
+
+    setAiAdoptedPlan(normalizedPlan);
+
+    setMessage(
+      "Gemini AIの学習計画を採用しました。"
+    );
+  },
+  [tasks]
+);
 
   /*
   ================================================
@@ -2372,6 +2475,17 @@ function App() {
               </section>
 
               <div className="content-grid">
+                <AIPlanPanel
+  date={selectedDate}
+  tasks={tasks.filter(
+    (task) =>
+      task.task_date === selectedDate
+  )}
+  fixedSchedules={selectedFixedSchedules}
+  settings={settings}
+  currentPlan={planData.plan}
+  onAdopt={handleAdoptAIPlan}
+/>
                 <section className="card">
                   <div className="section-header">
                     <div>
@@ -3080,8 +3194,8 @@ function App() {
                   </div>
                 </div>
 
-                {planData.plan.length ===
-                  0 && (
+              {currentPlanForAI.length ===
+  0 && (
                   <div className="empty-state">
                     <strong>
                       配置できるタスクがありません
@@ -3094,8 +3208,8 @@ function App() {
                 )}
 
                 <div className="plan-list">
-                  {planData.plan.map(
-                    (item) => (
+                  {currentPlanForAI.map(
+  (item) => (
                       <div
                         className="plan-item"
                         key={item.id}
@@ -3124,9 +3238,14 @@ function App() {
                           </strong>
 
                           <span>
-                            {item.minutes}分 · 優先度{" "}
-                            {item.priority}
-                          </span>
+  {item.minutes}分 · 優先度{" "}
+  {item.priority}
+
+  {item.aiGenerated &&
+    item.reason && (
+      <> · {item.reason}</>
+    )}
+</span>
                         </div>
 
                         <button
