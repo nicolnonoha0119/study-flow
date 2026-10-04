@@ -113,9 +113,9 @@ export default function AIPlanPanel({
         <textarea
           id="ai-user-message"
           value={userMessage}
-          onChange={(e) =>
-            setUserMessage(e.target.value)
-          }
+          onChange={(e) => {
+            setUserMessage(e.target.value);
+          }}
           placeholder={
             "例：今日は数学を多めにしたい\n" +
             "例：17時以降は勉強したくない\n" +
@@ -198,7 +198,7 @@ export default function AIPlanPanel({
 
             <div className="ai-result-badge">
               {hasPlan
-                ? `${aiResult.plan.length}件を提案`
+                ? String(aiResult.plan.length) + "件を提案"
                 : "分析完了"}
             </div>
           </div>
@@ -259,7 +259,13 @@ export default function AIPlanPanel({
                   (item, index) => (
                     <div
                       className="ai-schedule-item"
-                      key={`${item.start}-${item.end}-${index}`}
+                      key={
+                        String(item.start) +
+                        "-" +
+                        String(item.end) +
+                        "-" +
+                        String(index)
+                      }
                     >
                       <div className="ai-schedule-number">
                         {String(index + 1).padStart(
@@ -333,7 +339,11 @@ export default function AIPlanPanel({
                   (item, index) => (
                     <div
                       className="ai-remaining-item"
-                      key={`${item.title}-${index}`}
+                      key={
+                        String(item.title) +
+                        "-" +
+                        String(index)
+                      }
                     >
                       <div>
                         <strong>
