@@ -701,8 +701,6 @@ function AuthScreen() {
   const [nickname, setNickname] = useState("");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
-  const [aiAdoptedPlan, setAiAdoptedPlan] =
-  useState(null);
 
   const submit = async (event) => {
     event.preventDefault();
@@ -917,6 +915,8 @@ function App() {
     useState(todayString());
 
   const [message, setMessage] = useState("");
+
+  const [aiAdoptedPlan, setAiAdoptedPlan] = useState(null);
 
   /*
   タスクフォーム
@@ -1526,6 +1526,18 @@ function App() {
 
     const userId = session?.user?.id;
 
+    const duplicated = tasks.some(
+      (task) =>
+        task.id !== editingTaskId &&
+        task.task_date === (taskForm.task_date || selectedDate) &&
+        task.title.trim().toLowerCase() === title.toLowerCase()
+    );
+
+    if (duplicated) {
+      setMessage("同じ日付に同じタスクがすでに登録されています。");
+      return;
+    }
+
     if (editingTaskId) {
       const oldTask = tasks.find(
         (task) => task.id === editingTaskId
@@ -1883,6 +1895,10 @@ function App() {
       fixedSchedules,
     ]
   );
+
+  useEffect(() => {
+    setAiAdoptedPlan(null);
+  }, [selectedDate, tasks, settings, fixedSchedules]);
 /*
 ================================================
 Gemini AI plan
@@ -2073,6 +2089,25 @@ const handleAdoptAIPlan = useCallback(
     }
 
     return dates.size;
+  }, [studyLogs, tasks]);
+
+  const studyStreak = useMemo(() => {
+    const studiedDates = new Set();
+
+    for (const log of studyLogs) {
+      if (Number(log.minutes || 0) > 0) studiedDates.add(log.study_date);
+    }
+    for (const task of tasks) {
+      if (Number(task.studied_minutes || 0) > 0) studiedDates.add(task.task_date);
+    }
+
+    let streak = 0;
+    let cursor = todayString();
+    while (studiedDates.has(cursor)) {
+      streak += 1;
+      cursor = addDays(cursor, -1);
+    }
+    return streak;
   }, [studyLogs, tasks]);
 
   const subjectStats = useMemo(
@@ -3207,6 +3242,16 @@ const handleAdoptAIPlan = useCallback(
                   </div>
                 )}
 
+                <div className="form-actions" style={{ marginBottom: "16px" }}>
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    onClick={() => setAiAdoptedPlan(null)}
+                  >
+                    自動計画を再計算
+                  </button>
+                </div>
+
                 <div className="plan-list">
                   {currentPlanForAI.map(
   (item) => (
@@ -3535,6 +3580,12 @@ const handleAdoptAIPlan = useCallback(
                   <small>
                     日
                   </small>
+                </div>
+
+                <div className="stat-card highlight">
+                  <span>連続学習</span>
+                  <strong>{studyStreak}</strong>
+                  <small>日連続</small>
                 </div>
               </section>
 
