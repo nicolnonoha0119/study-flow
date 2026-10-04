@@ -1789,7 +1789,7 @@ function App() {
                       `${calendarMonth.slice(0, 7)}-01`,
                       32
                     )
-                  }
+                  )
                 }
               >
                 →
