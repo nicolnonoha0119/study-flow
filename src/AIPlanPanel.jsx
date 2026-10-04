@@ -1,4 +1,3 @@
-```jsx
 import React, { useState } from "react";
 import { generateAIPlan } from "./gemini";
 
@@ -72,17 +71,11 @@ export default function AIPlanPanel({
 
   return (
     <section className="ai-plan-panel">
-
-      {/* AI HEADER */}
       <div className="ai-hero">
-        <div className="ai-hero-icon">
-          ✦
-        </div>
+        <div className="ai-hero-icon">✦</div>
 
         <div className="ai-hero-content">
-          <div className="ai-eyebrow">
-            GEMINI AI
-          </div>
+          <div className="ai-eyebrow">GEMINI AI</div>
 
           <h2>
             学習計画を
@@ -101,13 +94,10 @@ export default function AIPlanPanel({
         </div>
       </div>
 
-      {/* INPUT */}
       <div className="ai-input-card">
         <div className="ai-input-header">
           <div>
-            <strong>
-              AIへの要望
-            </strong>
+            <strong>AIへの要望</strong>
 
             <span>
               今日の状況や希望を自由に入力できます
@@ -161,44 +151,32 @@ export default function AIPlanPanel({
         </div>
       </div>
 
-      {/* ERROR */}
       {aiError && (
         <div className="ai-error">
-          <div className="ai-error-icon">
-            !
-          </div>
+          <div className="ai-error-icon">!</div>
 
           <div>
             <strong>
               AI計画を作成できませんでした
             </strong>
 
-            <p>
-              {aiError}
-            </p>
+            <p>{aiError}</p>
           </div>
         </div>
       )}
 
-      {/* RESULT */}
       {aiResult && !aiError && (
         <div className="ai-result">
-
-          {/* RESULT HEADER */}
           <div className="ai-result-header">
             <div className="ai-result-heading">
-              <div className="ai-result-icon">
-                ✦
-              </div>
+              <div className="ai-result-icon">✦</div>
 
               <div>
                 <div className="ai-result-eyebrow">
                   AI ANALYSIS
                 </div>
 
-                <h3>
-                  AIからの提案
-                </h3>
+                <h3>AIからの提案</h3>
               </div>
             </div>
 
@@ -207,47 +185,31 @@ export default function AIPlanPanel({
             </div>
           </div>
 
-          {/* SUMMARY */}
           {aiResult.summary && (
             <div className="ai-summary">
-              <div className="ai-summary-mark">
-                “
-              </div>
+              <div className="ai-summary-mark">“</div>
 
-              <p>
-                {aiResult.summary}
-              </p>
+              <p>{aiResult.summary}</p>
             </div>
           )}
 
-          {/* ADVICE */}
           {aiResult.advice && (
             <div className="ai-advice">
-              <div className="ai-advice-icon">
-                💡
-              </div>
+              <div className="ai-advice-icon">💡</div>
 
               <div>
-                <strong>
-                  AIからのアドバイス
-                </strong>
+                <strong>AIからのアドバイス</strong>
 
-                <p>
-                  {aiResult.advice}
-                </p>
+                <p>{aiResult.advice}</p>
               </div>
             </div>
           )}
 
-          {/* SCHEDULE */}
           {hasPlan && (
             <div className="ai-schedule-section">
-
               <div className="ai-section-title">
                 <div>
-                  <strong>
-                    提案された学習計画
-                  </strong>
+                  <strong>提案された学習計画</strong>
 
                   <span>
                     AIが優先順位と空き時間を考慮して配置しました
@@ -303,9 +265,7 @@ export default function AIPlanPanel({
                       </div>
 
                       {item.reason && (
-                        <small>
-                          {item.reason}
-                        </small>
+                        <small>{item.reason}</small>
                       )}
                     </div>
                   </div>
@@ -314,14 +274,10 @@ export default function AIPlanPanel({
             </div>
           )}
 
-          {/* REMAINING */}
           {hasRemaining && (
             <div className="ai-remaining">
-
               <div className="ai-remaining-header">
-                <div className="ai-remaining-icon">
-                  !
-                </div>
+                <div className="ai-remaining-icon">!</div>
 
                 <div>
                   <strong>
@@ -351,9 +307,7 @@ export default function AIPlanPanel({
                         </strong>
 
                         {item.reason && (
-                          <small>
-                            {item.reason}
-                          </small>
+                          <small>{item.reason}</small>
                         )}
                       </div>
 
@@ -367,10 +321,8 @@ export default function AIPlanPanel({
             </div>
           )}
 
-          {/* ADOPT */}
           {hasPlan && (
             <div className="ai-adopt-area">
-
               <div>
                 <strong>
                   この計画で勉強しますか？
@@ -389,14 +341,10 @@ export default function AIPlanPanel({
                 <span>✓</span>
                 この計画を採用
               </button>
-
             </div>
           )}
-
         </div>
       )}
-
     </section>
   );
 }
-```
