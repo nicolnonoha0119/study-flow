@@ -1,533 +1,4 @@
 /* =========================================
-   AI Plan Panel - Modern AI Design
-========================================= */
-
-.ai-plan-panel {
-  position: relative;
-  overflow: hidden;
-  padding: 0 !important;
-  border: 1px solid #e1e4f4;
-  border-radius: 20px;
-  background:
-    radial-gradient(
-      circle at 100% 0%,
-      rgba(104, 114, 255, 0.13),
-      transparent 32%
-    ),
-    radial-gradient(
-      circle at 0% 100%,
-      rgba(139, 112, 239, 0.07),
-      transparent 30%
-    ),
-    #ffffff;
-  box-shadow:
-    0 12px 35px rgba(55, 65, 120, 0.07),
-    0 2px 8px rgba(55, 65, 120, 0.03);
-}
-
-/* 上部のAIヘッダー */
-.ai-plan-header {
-  position: relative;
-  padding: 22px 23px 20px;
-  border-bottom: 1px solid #eceef6;
-  background:
-    linear-gradient(
-      135deg,
-      rgba(242, 243, 255, 0.95),
-      rgba(250, 249, 255, 0.7)
-    );
-}
-
-/* AIの光るアクセント */
-.ai-plan-header::before {
-  content: "";
-  position: absolute;
-  top: -35px;
-  right: -25px;
-  width: 130px;
-  height: 130px;
-  border-radius: 50%;
-  background: rgba(105, 114, 245, 0.09);
-  filter: blur(5px);
-  pointer-events: none;
-}
-
-.ai-plan-title {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  color: #3f48b8;
-  font-size: 16px;
-  font-weight: 800;
-  letter-spacing: -0.02em;
-}
-
-.ai-plan-title::before {
-  content: "AI";
-  display: inline-grid;
-  place-items: center;
-  width: 31px;
-  height: 31px;
-  border-radius: 9px;
-  background: linear-gradient(
-    135deg,
-    #626cf4,
-    #8b70e8
-  );
-  color: white;
-  font-size: 10px;
-  font-weight: 900;
-  letter-spacing: 0.02em;
-  box-shadow:
-    0 5px 13px rgba(98, 108, 244, 0.25);
-}
-
-.ai-plan-description {
-  position: relative;
-  margin-top: 9px;
-  padding-left: 40px;
-  color: #7f879b;
-  font-size: 11px;
-  line-height: 1.7;
-}
-
-/* =========================================
-   AI Input
-========================================= */
-
-.ai-plan-input-area {
-  padding: 20px 23px 21px;
-}
-
-.ai-plan-input-area label {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  margin-bottom: 9px;
-  color: #525c72;
-  font-size: 11px;
-  font-weight: 800;
-}
-
-.ai-plan-input-area label::before {
-  content: "✦";
-  color: #6a72ec;
-  font-size: 12px;
-}
-
-.ai-plan-input-area textarea {
-  width: 100%;
-  min-height: 100px;
-  resize: vertical;
-  padding: 13px 14px;
-  border: 1px solid #e1e4ee;
-  border-radius: 12px;
-  background: #fafbfe;
-  color: #30384d;
-  font-family: inherit;
-  font-size: 12px;
-  line-height: 1.7;
-  outline: none;
-  transition:
-    border-color 0.2s,
-    box-shadow 0.2s,
-    background 0.2s;
-}
-
-.ai-plan-input-area textarea::placeholder {
-  color: #adb3c1;
-}
-
-.ai-plan-input-area textarea:focus {
-  border-color: #737bf0;
-  background: white;
-  box-shadow:
-    0 0 0 3px rgba(105, 114, 240, 0.1),
-    0 4px 15px rgba(62, 71, 140, 0.04);
-}
-
-/* =========================================
-   AI Generate Button
-========================================= */
-
-.ai-generate-button {
-  position: relative;
-  width: 100%;
-  margin-top: 11px;
-  padding: 12px 16px;
-  overflow: hidden;
-  border: 0;
-  border-radius: 11px;
-  background:
-    linear-gradient(
-      135deg,
-      #5964ef,
-      #756be8
-    );
-  color: white;
-  font-size: 12px;
-  font-weight: 800;
-  letter-spacing: 0.01em;
-  box-shadow:
-    0 7px 18px rgba(89, 100, 239, 0.22);
-  transition:
-    transform 0.15s,
-    box-shadow 0.15s,
-    filter 0.15s;
-}
-
-.ai-generate-button::after {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: -80%;
-  width: 50%;
-  height: 100%;
-  transform: skewX(-20deg);
-  background: rgba(255, 255, 255, 0.18);
-  transition: left 0.5s;
-}
-
-.ai-generate-button:hover:not(:disabled) {
-  transform: translateY(-1px);
-  box-shadow:
-    0 10px 22px rgba(89, 100, 239, 0.27);
-  filter: brightness(1.03);
-}
-
-.ai-generate-button:hover:not(:disabled)::after {
-  left: 130%;
-}
-
-.ai-generate-button:active:not(:disabled) {
-  transform: translateY(0);
-}
-
-/* =========================================
-   AI Error
-========================================= */
-
-.ai-error {
-  margin: 0 23px 20px;
-  padding: 13px 14px;
-  border: 1px solid #f0d5d5;
-  border-radius: 11px;
-  background: #fff7f7;
-  color: #b65b5b;
-  font-size: 11px;
-  line-height: 1.6;
-}
-
-.ai-error strong {
-  display: block;
-  margin-bottom: 3px;
-  color: #a94e4e;
-  font-size: 12px;
-}
-
-/* =========================================
-   AI Result
-========================================= */
-
-.ai-result {
-  margin: 0 23px 23px;
-  padding: 17px;
-  border: 1px solid #e3e5f4;
-  border-radius: 15px;
-  background:
-    linear-gradient(
-      180deg,
-      #fafaff,
-      #ffffff
-    );
-}
-
-.ai-result-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 13px;
-  color: #444dba;
-  font-size: 13px;
-  font-weight: 850;
-}
-
-.ai-result-title::before {
-  content: "✦";
-  display: grid;
-  place-items: center;
-  width: 25px;
-  height: 25px;
-  border-radius: 7px;
-  background: #eceeff;
-  color: #6069e9;
-  font-size: 12px;
-}
-
-/* AI summary */
-
-.ai-summary {
-  margin-bottom: 13px;
-  padding: 12px 13px;
-  border-left: 3px solid #6973ed;
-  border-radius: 0 9px 9px 0;
-  background: #f4f5ff;
-  color: #596176;
-  font-size: 11px;
-  line-height: 1.7;
-}
-
-/* AI advice */
-
-.ai-advice {
-  margin-bottom: 14px;
-  padding: 12px 13px;
-  border: 1px solid #eeeaf8;
-  border-radius: 10px;
-  background: #fcfaff;
-}
-
-.ai-advice strong {
-  display: block;
-  margin-bottom: 5px;
-  color: #6558a7;
-  font-size: 11px;
-}
-
-.ai-advice p {
-  margin: 0;
-  color: #777f92;
-  font-size: 11px;
-  line-height: 1.65;
-}
-
-/* =========================================
-   AI Schedule
-========================================= */
-
-.ai-schedule {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-  margin-top: 13px;
-}
-
-.ai-schedule-item {
-  display: flex;
-  align-items: stretch;
-  gap: 10px;
-  padding: 10px;
-  border: 1px solid #e9ebf3;
-  border-radius: 10px;
-  background: white;
-  transition:
-    border-color 0.15s,
-    transform 0.15s,
-    box-shadow 0.15s;
-}
-
-.ai-schedule-item:hover {
-  border-color: #d4d7ef;
-  transform: translateX(2px);
-  box-shadow: 0 4px 12px rgba(46, 56, 105, 0.05);
-}
-
-.ai-time {
-  flex: 0 0 72px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 7px;
-  background: #f0f1ff;
-  color: #5d67dc;
-  font-size: 10px;
-  font-weight: 800;
-  white-space: nowrap;
-}
-
-.ai-task {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 3px;
-}
-
-.ai-task strong {
-  overflow: hidden;
-  color: #3e4659;
-  font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.ai-task span {
-  width: fit-content;
-  padding: 2px 5px;
-  border-radius: 4px;
-  background: #f2f3f8;
-  color: #7c8496;
-  font-size: 9px;
-  font-weight: 700;
-}
-
-.ai-task small {
-  color: #a0a6b3;
-  font-size: 9px;
-  line-height: 1.4;
-}
-
-/* =========================================
-   Remaining Tasks
-========================================= */
-
-.ai-remaining {
-  margin-top: 14px;
-  padding: 12px;
-  border: 1px solid #f0dfbd;
-  border-radius: 10px;
-  background: #fffaf2;
-}
-
-.ai-remaining-title {
-  margin-bottom: 8px;
-  color: #96723a;
-  font-size: 11px;
-  font-weight: 800;
-}
-
-.ai-remaining-item {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 3px 8px;
-  padding: 8px 0;
-  border-top: 1px solid rgba(224, 197, 147, 0.35);
-}
-
-.ai-remaining-item:first-of-type {
-  border-top: 0;
-}
-
-.ai-remaining-item strong {
-  color: #68593e;
-  font-size: 10px;
-}
-
-.ai-remaining-item > span {
-  color: #a27b39;
-  font-size: 10px;
-  font-weight: 800;
-}
-
-.ai-remaining-item small {
-  grid-column: 1 / -1;
-  color: #9b8b70;
-  font-size: 9px;
-  line-height: 1.4;
-}
-
-/* =========================================
-   Adopt Button
-========================================= */
-
-.ai-adopt-button {
-  width: 100%;
-  margin-top: 14px;
-  padding: 11px 14px;
-  border: 1px solid #cfd3ff;
-  border-radius: 10px;
-  background: #eef0ff;
-  color: #525dd4;
-  font-size: 11px;
-  font-weight: 850;
-  transition:
-    background 0.15s,
-    border-color 0.15s,
-    transform 0.15s;
-}
-
-.ai-adopt-button:hover {
-  background: #e4e6ff;
-  border-color: #bfc4fb;
-  transform: translateY(-1px);
-}
-
-.ai-adopt-button:active {
-  transform: translateY(0);
-}
-
-/* =========================================
-   AI Loading
-========================================= */
-
-.ai-generate-button:disabled {
-  background: linear-gradient(
-    135deg,
-    #8188dd,
-    #9388d5
-  );
-}
-
-/* =========================================
-   AI Responsive
-========================================= */
-
-@media (max-width: 760px) {
-  .ai-plan-header {
-    padding: 19px 18px 17px;
-  }
-
-  .ai-plan-input-area {
-    padding: 17px 18px 18px;
-  }
-
-  .ai-plan-description {
-    padding-left: 0;
-    margin-top: 9px;
-  }
-
-  .ai-result {
-    margin-left: 18px;
-    margin-right: 18px;
-    padding: 14px;
-  }
-
-  .ai-error {
-    margin-left: 18px;
-    margin-right: 18px;
-  }
-
-  .ai-time {
-    flex-basis: 65px;
-  }
-}
-
-@media (max-width: 430px) {
-  .ai-plan-title {
-    font-size: 14px;
-  }
-
-  .ai-plan-description {
-    font-size: 10px;
-  }
-
-  .ai-schedule-item {
-    gap: 7px;
-    padding: 8px;
-  }
-
-  .ai-time {
-    flex-basis: 62px;
-    font-size: 9px;
-  }
-
-  .ai-task strong {
-    font-size: 10px;
-  }
-}
-```css
-/* =========================================
    AI Plan
    StudyFlow original design
 ========================================= */
@@ -543,7 +14,9 @@
     0 2px 6px rgba(29, 39, 70, 0.025);
 }
 
-/* AI Header */
+/* =========================================
+   AI Header
+========================================= */
 
 .ai-hero {
   display: flex;
@@ -624,7 +97,9 @@
   background: #65b88b;
 }
 
-/* Input */
+/* =========================================
+   AI Input
+========================================= */
 
 .ai-input-card {
   padding: 16px;
@@ -684,6 +159,7 @@
   transition:
     border-color 0.2s,
     box-shadow 0.2s;
+  box-sizing: border-box;
 }
 
 .ai-input-card textarea:focus {
@@ -708,6 +184,10 @@
   font-size: 10px;
 }
 
+/* =========================================
+   AI Generate Button
+========================================= */
+
 .ai-generate-button {
   display: inline-flex;
   align-items: center;
@@ -725,6 +205,7 @@
     transform 0.15s,
     background 0.15s,
     box-shadow 0.15s;
+  cursor: pointer;
 }
 
 .ai-generate-button:hover:not(:disabled) {
@@ -733,10 +214,19 @@
   box-shadow: 0 7px 17px rgba(89, 100, 242, 0.22);
 }
 
+.ai-generate-button:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.ai-generate-button:disabled {
+  cursor: wait;
+  opacity: 0.85;
+}
+
 .ai-spinner {
   width: 12px;
   height: 12px;
-  border: 2px solid rgba(255,255,255,0.35);
+  border: 2px solid rgba(255, 255, 255, 0.35);
   border-top-color: white;
   border-radius: 50%;
   animation: ai-spin 0.8s linear infinite;
@@ -748,7 +238,9 @@
   }
 }
 
-/* Error */
+/* =========================================
+   AI Error
+========================================= */
 
 .ai-error {
   display: flex;
@@ -786,7 +278,9 @@
   line-height: 1.5;
 }
 
-/* Result */
+/* =========================================
+   AI Result
+========================================= */
 
 .ai-result {
   margin-top: 18px;
@@ -841,7 +335,9 @@
   font-weight: 800;
 }
 
-/* Summary */
+/* =========================================
+   AI Summary
+========================================= */
 
 .ai-summary {
   display: flex;
@@ -865,7 +361,9 @@
   line-height: 1.65;
 }
 
-/* Advice */
+/* =========================================
+   AI Advice
+========================================= */
 
 .ai-advice {
   display: flex;
@@ -895,7 +393,9 @@
   line-height: 1.55;
 }
 
-/* Schedule */
+/* =========================================
+   AI Schedule
+========================================= */
 
 .ai-schedule-section {
   margin-top: 15px;
@@ -994,6 +494,7 @@
   display: flex;
   align-items: center;
   gap: 7px;
+  min-width: 0;
 }
 
 .ai-task-top strong {
@@ -1025,7 +526,9 @@
   white-space: nowrap;
 }
 
-/* Remaining */
+/* =========================================
+   Remaining Tasks
+========================================= */
 
 .ai-remaining {
   margin-top: 15px;
@@ -1107,7 +610,9 @@
   font-weight: 700;
 }
 
-/* Adopt */
+/* =========================================
+   Adopt
+========================================= */
 
 .ai-adopt-area {
   display: flex;
@@ -1157,11 +662,16 @@
   transition:
     transform 0.15s,
     background 0.15s;
+  cursor: pointer;
 }
 
 .ai-adopt-button:hover {
   background: #4d58e5;
   transform: translateY(-1px);
+}
+
+.ai-adopt-button:active {
+  transform: translateY(0);
 }
 
 .ai-adopt-button span {
@@ -1224,4 +734,34 @@
     justify-content: center;
   }
 }
-```
+
+@media (max-width: 430px) {
+  .ai-hero h2 {
+    font-size: 17px;
+  }
+
+  .ai-hero p {
+    font-size: 11px;
+  }
+
+  .ai-input-card {
+    padding: 13px;
+  }
+
+  .ai-schedule-item {
+    gap: 7px;
+  }
+
+  .ai-time {
+    width: 70px;
+    font-size: 9px;
+  }
+
+  .ai-task-top {
+    flex-wrap: wrap;
+  }
+
+  .ai-task-top strong {
+    font-size: 11px;
+  }
+}
