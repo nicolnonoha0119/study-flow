@@ -8,9 +8,6 @@ const SUPABASE_ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY;
 const ai = GEMINI_API_KEY
   ? new GoogleGenAI({
       apiKey: GEMINI_API_KEY,
-      httpOptions: {
-        apiVersion: "v1",
-      },
     })
   : null;
 
@@ -109,6 +106,10 @@ export default async function handler(req, res) {
   }
 
   try {
+    // =========================================
+    // Supabase authentication
+    // =========================================
+
     const authorization = req.headers.authorization || "";
 
     if (!authorization.startsWith("Bearer ")) {
@@ -150,6 +151,10 @@ export default async function handler(req, res) {
       });
     }
 
+    // =========================================
+    // Request data
+    // =========================================
+
     const {
       date,
       tasks = [],
@@ -165,40 +170,50 @@ export default async function handler(req, res) {
       });
     }
 
+    // =========================================
+    // System instruction
+    // =========================================
+
     const systemInstruction = `
 あなたはStudyFlowのAI学習プランナーです。
 
 高校生の受験勉強を支援するため、
 ユーザーのタスク、優先度、固定予定、勉強可能時間を分析して、
-現実的な1日の学習計画を作成してください。
+現実的で実行しやすい1日の学習計画を作成してください。
 
-必ず守るルール：
+必ず以下のルールを守ってください。
 
 1. 固定予定と勉強時間を重複させない。
 2. 実際の勉強可能時間を超えない。
 3. 完了済みタスクは計画しない。
 4. 優先度の高いタスクを優先する。
-5. 必要時間を大きく勝手に変更しない。
+5. タスクの必要時間を大きく勝手に変更しない。
 6. 長時間連続しすぎないよう適度に休憩を入れる。
 7. ユーザーの追加要望をできる限り反映する。
 8. すべてのタスクを終えられない場合は無理に詰め込まない。
 9. 終わらないタスクはremainingTasksに入れる。
 10. 時刻は24時間表記にする。
-11. startとendから計算した時間とminutesが矛盾しないようにする。
+11. startとendから計算した時間とminutesを一致させる。
 12. planは時間順に並べる。
-13. typeはstudy、break、fixedのいずれか。
-14. 固定予定にはtype=fixedを使用する。
-15. 休憩にはtype=breakを使用する。
-16. 勉強にはtype=studyを使用する。
+13. typeは "study"、"break"、"fixed" のいずれか。
+14. 固定予定にはtype="fixed"を使用する。
+15. 休憩にはtype="break"を使用する。
+16. 勉強にはtype="study"を使用する。
+17. 空き時間が少ない場合は、優先度の低いタスクをremainingTasksに回す。
+18. 現実的に実行できる計画を優先し、予定を過密にしない。
 
-出力は指定されたJSON Schemaに完全に従ってください。
+必ず指定されたJSON Schemaに従ってJSONだけを返してください。
 `;
+
+    // =========================================
+    // User input
+    // =========================================
 
     const input = `
 今日の日付：
 ${date}
 
-【ユーザー】
+【ユーザーID】
 ${user.id}
 
 【学習設定】
@@ -220,67 +235,108 @@ ${userMessage || "特になし"}
 今日実行しやすい学習計画を作成してください。
 `;
 
-    const interaction = await ai.interactions.create({
+    // =========================================
+    // Gemini Generate Content API
+    // =========================================
+
+    const response = await ai.models.generateContent({
       model: "gemini-3.8-flash",
 
-      system_instruction: systemInstruction,
+      contents: input,
 
-      input,
+      config: {
+        systemInstruction,
 
-      store: false,
+        responseMimeType: "application/json",
 
-      response_format: [
-        {
-          type: "text",
-          mime_type: "application/json",
-          schema: planSchema,
-        },
-      ],
-
-      generation_config: {
-        temperature: 0.3,
+        responseSchema: planSchema,
       },
     });
 
-    const outputText = interaction.output_text || "";
+    const outputText = response.text || "";
 
     if (!outputText) {
+      console.error("Gemini returned empty response.");
+
       return sendJson(res, 502, {
-        error: "Gemini returned an empty response.",
+        error:
+          "Geminiから空の応答が返されました。",
       });
     }
+
+    // =========================================
+    // JSON parse
+    // =========================================
 
     let result;
 
     try {
       result = JSON.parse(outputText);
     } catch (error) {
-      console.error("Gemini JSON parse error:", error);
-      console.error("Gemini output:", outputText);
+      console.error(
+        "Gemini JSON parse error:",
+        error
+      );
+
+      console.error(
+        "Gemini output:",
+        outputText
+      );
 
       return sendJson(res, 502, {
-        error: "Gemini returned invalid JSON.",
+        error:
+          "Geminiから正しいJSONを取得できませんでした。",
       });
     }
 
+    // =========================================
+    // Response
+    // =========================================
+
     return sendJson(res, 200, {
       success: true,
+
       summary: result.summary || "",
+
       advice: result.advice || "",
+
       plan: Array.isArray(result.plan)
         ? result.plan
         : [],
-      remainingTasks: Array.isArray(result.remainingTasks)
+
+      remainingTasks: Array.isArray(
+        result.remainingTasks
+      )
         ? result.remainingTasks
         : [],
     });
   } catch (error) {
-    console.error("Gemini API error:", error);
+    console.error(
+      "Gemini API error:",
+      error
+    );
+
+    const message =
+      error?.message ||
+      "Gemini API request failed.";
+
+    // 403の場合は、原因を画面に分かりやすく返す
+    if (
+      error?.status === 403 ||
+      error?.code === 403 ||
+      String(message).includes("403") ||
+      String(message).includes(
+        "denied access"
+      )
+    ) {
+      return sendJson(res, 403, {
+        error:
+          "Gemini APIへのアクセスが拒否されています。Google AI Studio / Google Cloud側のプロジェクト設定を確認してください。",
+      });
+    }
 
     return sendJson(res, 500, {
-      error:
-        error?.message ||
-        "Gemini API request failed.",
+      error: message,
     });
   }
 }
