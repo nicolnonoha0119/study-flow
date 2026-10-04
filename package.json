@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@google/genai": "^2.3.0",
     "@supabase/supabase-js": "^2.57.0",
     "@vitejs/plugin-react": "^4.3.1",
     "vite": "^5.4.21",
