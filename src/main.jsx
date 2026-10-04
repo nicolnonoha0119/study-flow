@@ -1,54 +1,52 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, {
+  useEffect,
+  useMemo,
+  useState,
+  useCallback,
+} from "react";
 import { createRoot } from "react-dom/client";
 import { supabase } from "./supabase";
 import "./styles.css";
 
 /*
-========================================
+==================================================
  StudyFlow
- AI搭載前・統合版
-========================================
+ AI搭載直前・統合版
+==================================================
 
-【認証】
-・メールアドレス / パスワード
-・新規登録 / ログイン / ログアウト
-
-【データ】
-・Supabase保存
-・localStorageバックアップ
-・初回ログイン時のデータ移行
-
-【学習管理】
-・タスク
-・優先度
-・必要時間
-・学習済み時間
-・完了状態
-
-【時間管理】
-・起床時刻
-・朝の支度
-・学習可能時間帯
-・自習室移動
+実装
+・Supabase Auth
+・プロフィール
+・タスク管理
 ・固定予定
-・空き時間自動計算
-
-【自動計画】
-・優先度順
-・空き時間への自動配置
-・長時間タスクの自動分割
-・不足時間表示
-
-【その他】
+・勉強可能時間自動計算
+・自動学習計画
 ・タイマー
+・study_logs
 ・カレンダー
-・進捗
+・週間/月間進捗
+・科目別進捗
 ・設定
+・localStorage fallback
+・Supabase同期
 
-========================================
+AI搭載時には
+generatePlan()
+をAIによる計画生成部分と接続する。
+==================================================
 */
 
-const LOCAL_KEY = "studyflow_all_in_one_v2";
+const LOCAL_KEY = "studyflow_data_v4";
+
+const DEFAULT_SETTINGS = {
+  wakeUpTime: "07:00",
+  morningPrepMinutes: 70,
+  useStudyRoom: false,
+  travelMinutes: 40,
+  studyStart: "14:00",
+  studyEnd: "19:20",
+  defaultTaskMinutes: 45,
+};
 
 const DEFAULT_TASKS = [
   {
@@ -83,35 +81,34 @@ const DEFAULT_TASKS = [
   },
 ];
 
-const DEFAULT_SETTINGS = {
-  wakeUpTime: "07:00",
-  morningPrepMinutes: 70,
+const SUBJECTS = [
+  "数学",
+  "英語",
+  "物理",
+  "化学",
+  "国語",
+  "研究",
+  "その他",
+];
 
-  useStudyRoom: false,
-  travelMinutes: 40,
+const FIXED_CATEGORIES = [
+  { value: "school", label: "学校" },
+  { value: "cram", label: "塾" },
+  { value: "club", label: "部活" },
+  { value: "private", label: "予定" },
+  { value: "other", label: "その他" },
+];
 
-  studyStart: "14:00",
-  studyEnd: "22:00",
+function createId() {
+  if (
+    typeof crypto !== "undefined" &&
+    typeof crypto.randomUUID === "function"
+  ) {
+    return crypto.randomUUID();
+  }
 
-  defaultTaskMinutes: 45,
-
-  breakMinutes: 10,
-
-  minimumStudyBlock: 15,
-};
-
-const FIXED_CATEGORIES = {
-  school: "学校",
-  cram: "塾",
-  club: "部活",
-  meal: "食事",
-  research: "研究",
-  other: "その他",
-};
-
-/* ========================================
-   基本関数
-======================================== */
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
 
 function todayString() {
   const d = new Date();
@@ -123,12 +120,52 @@ function todayString() {
   return `${y}-${m}-${day}`;
 }
 
+function dateToString(date) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+
+  return `${y}-${m}-${d}`;
+}
+
 function formatDateJP(dateString) {
   if (!dateString) return "";
 
-  const [y, m, d] = dateString.split("-");
+  const d = new Date(`${dateString}T00:00:00`);
 
-  return `${y}/${m}/${d}`;
+  return d.toLocaleDateString("ja-JP", {
+    month: "long",
+    day: "numeric",
+    weekday: "short",
+  });
+}
+
+function addDays(dateString, amount) {
+  const d = new Date(`${dateString}T00:00:00`);
+  d.setDate(d.getDate() + amount);
+  return dateToString(d);
+}
+
+function changeMonth(dateString, amount) {
+  const d = new Date(`${dateString.slice(0, 7)}-01T00:00:00`);
+
+  d.setMonth(d.getMonth() + amount);
+
+  return dateToString(d);
+}
+
+function getMonthStart(dateString) {
+  return `${dateString.slice(0, 7)}-01`;
+}
+
+function getDaysInMonth(dateString) {
+  const d = new Date(`${dateString.slice(0, 7)}-01T00:00:00`);
+
+  return new Date(
+    d.getFullYear(),
+    d.getMonth() + 1,
+    0
+  ).getDate();
 }
 
 function timeToMinutes(time) {
@@ -139,11 +176,11 @@ function timeToMinutes(time) {
   return h * 60 + m;
 }
 
-function minutesToTime(total) {
-  total = Math.max(0, Math.round(total));
+function minutesToTime(minutes) {
+  const safe = Math.max(0, Math.round(minutes));
 
-  const h = Math.floor(total / 60);
-  const m = total % 60;
+  const h = Math.floor(safe / 60) % 24;
+  const m = safe % 60;
 
   return `${String(h).padStart(2, "0")}:${String(m).padStart(
     2,
@@ -151,44 +188,481 @@ function minutesToTime(total) {
   )}`;
 }
 
-function addDays(dateString, amount) {
+function formatMinutes(minutes) {
+  const total = Math.max(0, Math.round(minutes || 0));
+
+  const h = Math.floor(total / 60);
+  const m = total % 60;
+
+  if (h === 0) return `${m}分`;
+
+  if (m === 0) return `${h}時間`;
+
+  return `${h}時間${m}分`;
+}
+
+function getWeekStart(dateString) {
   const d = new Date(`${dateString}T00:00:00`);
+  const day = d.getDay();
 
-  d.setDate(d.getDate() + amount);
+  const diff = day === 0 ? -6 : 1 - day;
 
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
+  d.setDate(d.getDate() + diff);
 
-  return `${y}-${m}-${day}`;
+  return dateToString(d);
 }
 
-function getDaysInMonth(dateString) {
-  const [year, month] = dateString.split("-").map(Number);
+function getMonthDates(dateString) {
+  const first = new Date(`${dateString.slice(0, 7)}-01T00:00:00`);
 
-  return new Date(year, month, 0).getDate();
-}
+  const year = first.getFullYear();
+  const month = first.getMonth();
 
-function getMonthStart(dateString) {
-  return `${dateString.slice(0, 7)}-01`;
-}
+  const firstDay = new Date(year, month, 1).getDay();
+  const offset = firstDay === 0 ? 6 : firstDay - 1;
 
-function getRandomId() {
-  if (
-    typeof crypto !== "undefined" &&
-    typeof crypto.randomUUID === "function"
-  ) {
-    return crypto.randomUUID();
+  const days = new Date(year, month + 1, 0).getDate();
+
+  const result = [];
+
+  for (let i = 0; i < offset; i++) {
+    result.push(null);
   }
 
-  return `${Date.now()}-${Math.random()
-    .toString(16)
-    .slice(2)}`;
+  for (let i = 1; i <= days; i++) {
+    result.push(
+      `${year}-${String(month + 1).padStart(2, "0")}-${String(
+        i
+      ).padStart(2, "0")}`
+    );
+  }
+
+  return result;
 }
 
-/* ========================================
-   LocalStorage
-======================================== */
+function normalizeTask(task, userId) {
+  return {
+    id: task.id || createId(),
+    user_id: task.user_id || userId,
+    subject: task.subject || "その他",
+    title: task.title || "新しいタスク",
+    minutes: Math.max(1, Number(task.minutes) || 45),
+    priority: Math.min(
+      5,
+      Math.max(1, Number(task.priority) || 3)
+    ),
+    task_date: task.task_date || todayString(),
+    completed: Boolean(task.completed),
+    studied_minutes: Math.max(
+      0,
+      Number(task.studied_minutes) || 0
+    ),
+    created_at: task.created_at || new Date().toISOString(),
+  };
+}
+
+function normalizeFixedSchedule(schedule, userId) {
+  return {
+    id: schedule.id || createId(),
+    user_id: schedule.user_id || userId,
+    title: schedule.title || "固定予定",
+    category: schedule.category || "other",
+    start_time: schedule.start_time || "09:00",
+    end_time: schedule.end_time || "10:00",
+    repeat_type: schedule.repeat_type || "today",
+    schedule_date: schedule.schedule_date || todayString(),
+    created_at: schedule.created_at || new Date().toISOString(),
+  };
+}
+
+function normalizeSettings(settings) {
+  return {
+    ...DEFAULT_SETTINGS,
+    ...(settings || {}),
+    morningPrepMinutes: Math.max(
+      0,
+      Number(settings?.morningPrepMinutes) ||
+        DEFAULT_SETTINGS.morningPrepMinutes
+    ),
+    travelMinutes: Math.max(
+      0,
+      Number(settings?.travelMinutes) ||
+        DEFAULT_SETTINGS.travelMinutes
+    ),
+    defaultTaskMinutes: Math.max(
+      1,
+      Number(settings?.defaultTaskMinutes) ||
+        DEFAULT_SETTINGS.defaultTaskMinutes
+    ),
+  };
+}
+
+function scheduleAppliesToDate(schedule, dateString) {
+  if (schedule.repeat_type === "daily") {
+    return true;
+  }
+
+  return schedule.schedule_date === dateString;
+}
+
+function getBlockedIntervals(dateString, settings, fixedSchedules) {
+  const blocked = [];
+
+  const studyStart = timeToMinutes(settings.studyStart);
+  const studyEnd = timeToMinutes(settings.studyEnd);
+  const wake = timeToMinutes(settings.wakeUpTime);
+
+  /*
+   勉強時間帯の外側
+  */
+
+  blocked.push({
+    start: 0,
+    end: Math.max(0, studyStart),
+    type: "outside",
+    label: "勉強開始前",
+  });
+
+  blocked.push({
+    start: Math.min(1440, studyEnd),
+    end: 1440,
+    type: "outside",
+    label: "勉強終了後",
+  });
+
+  /*
+   起床前
+  */
+
+  if (wake > 0 && wake < studyStart) {
+    blocked.push({
+      start: 0,
+      end: wake,
+      type: "sleep",
+      label: "起床前",
+    });
+  }
+
+  /*
+   朝の支度
+  */
+
+  const prepStart = wake;
+  const prepEnd = wake + Number(settings.morningPrepMinutes || 0);
+
+  if (prepEnd > prepStart && prepStart < studyStart) {
+    blocked.push({
+      start: prepStart,
+      end: Math.min(prepEnd, studyStart),
+      type: "prep",
+      label: "朝の支度",
+    });
+  }
+
+  /*
+   自習室への移動
+  */
+
+  if (settings.useStudyRoom && settings.travelMinutes > 0) {
+    const travelEnd = studyStart;
+    const travelStart =
+      studyStart - Number(settings.travelMinutes);
+
+    blocked.push({
+      start: Math.max(0, travelStart),
+      end: travelEnd,
+      type: "travel",
+      label: "自習室への移動",
+    });
+  }
+
+  /*
+   固定予定
+  */
+
+  fixedSchedules
+    .filter((s) => scheduleAppliesToDate(s, dateString))
+    .forEach((schedule) => {
+      const start = timeToMinutes(schedule.start_time);
+      const end = timeToMinutes(schedule.end_time);
+
+      if (end > start) {
+        blocked.push({
+          start,
+          end,
+          type: "fixed",
+          label: schedule.title,
+        });
+      }
+    });
+
+  return mergeIntervals(blocked);
+}
+
+function mergeIntervals(intervals) {
+  const sorted = [...intervals]
+    .filter((x) => x.end > x.start)
+    .sort((a, b) => a.start - b.start);
+
+  const result = [];
+
+  for (const current of sorted) {
+    const last = result[result.length - 1];
+
+    if (!last || current.start > last.end) {
+      result.push({ ...current });
+    } else {
+      last.end = Math.max(last.end, current.end);
+
+      if (current.label && !last.label.includes(current.label)) {
+        last.label += ` / ${current.label}`;
+      }
+    }
+  }
+
+  return result;
+}
+
+function getFreeSlots(dateString, settings, fixedSchedules) {
+  const studyStart = timeToMinutes(settings.studyStart);
+  const studyEnd = timeToMinutes(settings.studyEnd);
+
+  if (studyEnd <= studyStart) return [];
+
+  const blocked = getBlockedIntervals(
+    dateString,
+    settings,
+    fixedSchedules
+  );
+
+  const relevant = blocked
+    .filter(
+      (x) =>
+        x.end > studyStart &&
+        x.start < studyEnd
+    )
+    .map((x) => ({
+      start: Math.max(studyStart, x.start),
+      end: Math.min(studyEnd, x.end),
+    }))
+    .sort((a, b) => a.start - b.start);
+
+  const slots = [];
+
+  let cursor = studyStart;
+
+  for (const block of relevant) {
+    if (block.start > cursor) {
+      slots.push({
+        start: cursor,
+        end: block.start,
+        minutes: block.start - cursor,
+      });
+    }
+
+    cursor = Math.max(cursor, block.end);
+  }
+
+  if (cursor < studyEnd) {
+    slots.push({
+      start: cursor,
+      end: studyEnd,
+      minutes: studyEnd - cursor,
+    });
+  }
+
+  return slots.filter((slot) => slot.minutes > 0);
+}
+
+function getAvailableMinutes(dateString, settings, fixedSchedules) {
+  return getFreeSlots(
+    dateString,
+    settings,
+    fixedSchedules
+  ).reduce((sum, slot) => sum + slot.minutes, 0);
+}
+
+/*
+==================================================
+ 自動計画エンジン
+
+ AIを追加するときは、
+ この関数の前後にAIによる判断を入れる。
+==================================================
+*/
+
+function generatePlan({
+  dateString,
+  tasks,
+  settings,
+  fixedSchedules,
+}) {
+  const slots = getFreeSlots(
+    dateString,
+    settings,
+    fixedSchedules
+  );
+
+  const available = slots.reduce(
+    (sum, slot) => sum + slot.minutes,
+    0
+  );
+
+  const targets = tasks
+    .filter(
+      (task) =>
+        task.task_date === dateString &&
+        !task.completed
+    )
+    .map((task) => ({
+      ...task,
+      remaining: Math.max(
+        0,
+        Number(task.minutes || 0) -
+          Number(task.studied_minutes || 0)
+      ),
+    }))
+    .filter((task) => task.remaining > 0)
+    .sort((a, b) => {
+      if (b.priority !== a.priority) {
+        return b.priority - a.priority;
+      }
+
+      return b.remaining - a.remaining;
+    });
+
+  const plan = [];
+
+  let slotIndex = 0;
+  let cursor =
+    slots.length > 0 ? slots[0].start : 0;
+
+  for (const task of targets) {
+    let remaining = task.remaining;
+
+    while (
+      remaining > 0 &&
+      slotIndex < slots.length
+    ) {
+      const slot = slots[slotIndex];
+
+      if (cursor < slot.start) {
+        cursor = slot.start;
+      }
+
+      const availableHere = slot.end - cursor;
+
+      if (availableHere <= 0) {
+        slotIndex += 1;
+
+        if (slots[slotIndex]) {
+          cursor = slots[slotIndex].start;
+        }
+
+        continue;
+      }
+
+      const amount = Math.min(
+        remaining,
+        availableHere
+      );
+
+      plan.push({
+        id: createId(),
+        taskId: task.id,
+        title: task.title,
+        subject: task.subject,
+        priority: task.priority,
+        start: cursor,
+        end: cursor + amount,
+        minutes: amount,
+      });
+
+      remaining -= amount;
+      cursor += amount;
+
+      if (cursor >= slot.end) {
+        slotIndex += 1;
+
+        if (slots[slotIndex]) {
+          cursor = slots[slotIndex].start;
+        }
+      }
+    }
+  }
+
+  const plannedMinutes = plan.reduce(
+    (sum, item) => sum + item.minutes,
+    0
+  );
+
+  const requiredMinutes = targets.reduce(
+    (sum, task) => sum + task.remaining,
+    0
+  );
+
+  const shortage = Math.max(
+    0,
+    requiredMinutes - plannedMinutes
+  );
+
+  const remainingAfterPlan = Math.max(
+    0,
+    available - plannedMinutes
+  );
+
+  return {
+    plan,
+    totalAvailable: available,
+    totalRequired: requiredMinutes,
+    plannedMinutes,
+    shortage,
+    remainingAfterPlan,
+    slots,
+  };
+}
+
+function getTaskRemaining(task) {
+  return Math.max(
+    0,
+    Number(task.minutes || 0) -
+      Number(task.studied_minutes || 0)
+  );
+}
+
+function getSubjectStats(tasks) {
+  const map = {};
+
+  for (const task of tasks) {
+    if (!map[task.subject]) {
+      map[task.subject] = {
+        subject: task.subject,
+        planned: 0,
+        studied: 0,
+        completed: 0,
+      };
+    }
+
+    map[task.subject].planned += Number(task.minutes || 0);
+    map[task.subject].studied += Number(
+      task.studied_minutes || 0
+    );
+
+    if (task.completed) {
+      map[task.subject].completed += 1;
+    }
+  }
+
+  return Object.values(map).sort(
+    (a, b) => b.studied - a.studied
+  );
+}
+
+/*
+==================================================
+ localStorage
+==================================================
+*/
 
 function getLocalData() {
   try {
@@ -196,20 +670,7 @@ function getLocalData() {
 
     if (!raw) return null;
 
-    const data = JSON.parse(raw);
-
-    return {
-      tasks: Array.isArray(data.tasks) ? data.tasks : [],
-
-      fixedSchedules: Array.isArray(data.fixedSchedules)
-        ? data.fixedSchedules
-        : [],
-
-      settings: {
-        ...DEFAULT_SETTINGS,
-        ...(data.settings || {}),
-      },
-    };
+    return JSON.parse(raw);
   } catch {
     return null;
   }
@@ -219,995 +680,273 @@ function saveLocalData(data) {
   try {
     localStorage.setItem(
       LOCAL_KEY,
-      JSON.stringify({
-        tasks: data.tasks || [],
-        fixedSchedules: data.fixedSchedules || [],
-        settings: data.settings || DEFAULT_SETTINGS,
-      })
+      JSON.stringify(data)
     );
-  } catch (error) {
-    console.error("localStorage error:", error);
+  } catch {
+    // localStorageが使用できない場合は無視
   }
-}
-
-/* ========================================
-   Normalize
-======================================== */
-
-function normalizeTask(task) {
-  return {
-    id: task.id || getRandomId(),
-
-    subject: task.subject || "その他",
-
-    title: task.title || "無題のタスク",
-
-    minutes: Math.max(
-      1,
-      Number(task.minutes) || 30
-    ),
-
-    priority: Math.min(
-      5,
-      Math.max(1, Number(task.priority) || 3)
-    ),
-
-    taskDate:
-      task.taskDate ||
-      task.task_date ||
-      todayString(),
-
-    completed: Boolean(task.completed),
-
-    studiedMinutes:
-      Number(
-        task.studiedMinutes ??
-          task.studied_minutes
-      ) || 0,
-  };
-}
-
-function normalizeFixedSchedule(schedule) {
-  return {
-    id: schedule.id || getRandomId(),
-
-    title: schedule.title || "予定",
-
-    category:
-      schedule.category || "other",
-
-    startTime:
-      schedule.startTime ||
-      schedule.start_time ||
-      "09:00",
-
-    endTime:
-      schedule.endTime ||
-      schedule.end_time ||
-      "10:00",
-
-    repeatType:
-      schedule.repeatType ||
-      schedule.repeat_type ||
-      "today",
-
-    scheduleDate:
-      schedule.scheduleDate ||
-      schedule.schedule_date ||
-      todayString(),
-  };
-}
-
-/* ========================================
-   Schedule
-======================================== */
-
-function scheduleAppliesToDate(schedule, date) {
-  if (schedule.repeatType === "daily") {
-    return true;
-  }
-
-  return schedule.scheduleDate === date;
-}
-
-/* ========================================
-   時間計算
-======================================== */
-
-/*
-   勉強できない時間を全部集める
-*/
-function getBlockedIntervals(
-  date,
-  settings,
-  fixedSchedules
-) {
-  const intervals = [];
-
-  const wakeUp = timeToMinutes(
-    settings.wakeUpTime
-  );
-
-  const prep = Number(
-    settings.morningPrepMinutes || 0
-  );
-
-  const studyStart = timeToMinutes(
-    settings.studyStart
-  );
-
-  const studyEnd = timeToMinutes(
-    settings.studyEnd
-  );
-
-  /* 起床前 */
-  intervals.push({
-    start: 0,
-    end: wakeUp,
-    reason: "起床前",
-  });
-
-  /* 朝の支度 */
-  intervals.push({
-    start: wakeUp,
-    end: wakeUp + prep,
-    reason: "朝の支度",
-  });
-
-  /*
-     学習可能時間帯より前
-  */
-  intervals.push({
-    start: 0,
-    end: studyStart,
-    reason: "学習時間外",
-  });
-
-  /*
-     学習可能時間帯より後
-  */
-  intervals.push({
-    start: studyEnd,
-    end: 24 * 60,
-    reason: "学習時間外",
-  });
-
-  /*
-     自習室への移動
-  */
-  if (settings.useStudyRoom) {
-    const travel = Number(
-      settings.travelMinutes || 0
-    );
-
-    if (travel > 0) {
-      intervals.push({
-        start: Math.max(
-          0,
-          studyStart - travel
-        ),
-        end: studyStart,
-        reason: "自習室への移動",
-      });
-    }
-  }
-
-  /*
-     固定予定
-  */
-  fixedSchedules
-    .filter((schedule) =>
-      scheduleAppliesToDate(
-        schedule,
-        date
-      )
-    )
-    .forEach((schedule) => {
-      const start = timeToMinutes(
-        schedule.startTime
-      );
-
-      const end = timeToMinutes(
-        schedule.endTime
-      );
-
-      if (end > start) {
-        intervals.push({
-          start,
-          end,
-          reason:
-            schedule.title ||
-            FIXED_CATEGORIES[
-              schedule.category
-            ] ||
-            "固定予定",
-        });
-      }
-    });
-
-  return mergeIntervals(intervals);
 }
 
 /*
-   重なっている時間をまとめる
+==================================================
+ Auth
+==================================================
 */
-function mergeIntervals(intervals) {
-  const valid = intervals
-    .filter(
-      (item) => item.end > item.start
-    )
-    .sort(
-      (a, b) => a.start - b.start
-    );
 
-  const result = [];
+function AuthScreen() {
+  const [mode, setMode] = useState("login");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [nickname, setNickname] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState("");
 
-  for (const current of valid) {
-    if (result.length === 0) {
-      result.push({
-        start: current.start,
-        end: current.end,
-        reasons: current.reason
-          ? [current.reason]
-          : [],
-      });
+  const submit = async (event) => {
+    event.preventDefault();
 
-      continue;
+    setMessage("");
+
+    if (!email || !password) {
+      setMessage("メールアドレスとパスワードを入力してください。");
+      return;
     }
 
-    const last =
-      result[result.length - 1];
-
-    if (current.start <= last.end) {
-      last.end = Math.max(
-        last.end,
-        current.end
-      );
-
-      if (
-        current.reason &&
-        !last.reasons.includes(
-          current.reason
-        )
-      ) {
-        last.reasons.push(
-          current.reason
-        );
-      }
-    } else {
-      result.push({
-        start: current.start,
-        end: current.end,
-        reasons: current.reason
-          ? [current.reason]
-          : [],
-      });
+    if (mode === "signup" && !nickname.trim()) {
+      setMessage("ニックネームを入力してください。");
+      return;
     }
-  }
-
-  return result;
-}
-
-/*
-   実際に勉強できる空き時間
-*/
-function getFreeSlots(
-  date,
-  settings,
-  fixedSchedules
-) {
-  const studyStart = timeToMinutes(
-    settings.studyStart
-  );
-
-  const studyEnd = timeToMinutes(
-    settings.studyEnd
-  );
-
-  if (studyEnd <= studyStart) {
-    return [];
-  }
-
-  const blocked =
-    getBlockedIntervals(
-      date,
-      settings,
-      fixedSchedules
-    );
-
-  const relevant = blocked
-    .filter(
-      (item) =>
-        item.end > studyStart &&
-        item.start < studyEnd
-    )
-    .map((item) => ({
-      start: Math.max(
-        item.start,
-        studyStart
-      ),
-      end: Math.min(
-        item.end,
-        studyEnd
-      ),
-    }));
-
-  const merged =
-    mergeIntervals(relevant);
-
-  const slots = [];
-
-  let cursor = studyStart;
-
-  for (const block of merged) {
-    if (block.start > cursor) {
-      slots.push({
-        start: cursor,
-        end: block.start,
-        minutes:
-          block.start - cursor,
-      });
-    }
-
-    cursor = Math.max(
-      cursor,
-      block.end
-    );
-  }
-
-  if (cursor < studyEnd) {
-    slots.push({
-      start: cursor,
-      end: studyEnd,
-      minutes:
-        studyEnd - cursor,
-    });
-  }
-
-  return slots.filter(
-    (slot) =>
-      slot.minutes >=
-      Number(
-        settings.minimumStudyBlock || 1
-      )
-  );
-}
-
-/*
-   時間分析
-*/
-function analyzeDay(
-  date,
-  settings,
-  fixedSchedules
-) {
-  const studyStart = timeToMinutes(
-    settings.studyStart
-  );
-
-  const studyEnd = timeToMinutes(
-    settings.studyEnd
-  );
-
-  const freeSlots = getFreeSlots(
-    date,
-    settings,
-    fixedSchedules
-  );
-
-  const blocked =
-    getBlockedIntervals(
-      date,
-      settings,
-      fixedSchedules
-    );
-
-  const totalWindow = Math.max(
-    0,
-    studyEnd - studyStart
-  );
-
-  const totalAvailable =
-    freeSlots.reduce(
-      (sum, slot) =>
-        sum + slot.minutes,
-      0
-    );
-
-  const blockedDuringStudy =
-    Math.max(
-      0,
-      totalWindow - totalAvailable
-    );
-
-  return {
-    studyStart,
-    studyEnd,
-
-    totalWindow,
-
-    totalAvailable,
-
-    blockedDuringStudy,
-
-    freeSlots,
-
-    blocked,
-  };
-}
-
-/* ========================================
-   自動学習計画
-======================================== */
-
-function generatePlan(
-  date,
-  tasks,
-  settings,
-  fixedSchedules
-) {
-  const analysis = analyzeDay(
-    date,
-    settings,
-    fixedSchedules
-  );
-
-  const availableTasks = tasks
-    .filter(
-      (task) =>
-        task.taskDate === date &&
-        !task.completed
-    )
-    .map((task) => ({
-      ...task,
-
-      remaining: Math.max(
-        0,
-        Number(task.minutes) -
-          Number(
-            task.studiedMinutes || 0
-          )
-      ),
-    }))
-    .filter(
-      (task) => task.remaining > 0
-    )
-    .sort((a, b) => {
-      /*
-         優先度 →
-         未完了時間 →
-         科目
-      */
-      if (
-        b.priority !==
-        a.priority
-      ) {
-        return (
-          b.priority -
-          a.priority
-        );
-      }
-
-      if (
-        b.remaining !==
-        a.remaining
-      ) {
-        return (
-          b.remaining -
-          a.remaining
-        );
-      }
-
-      return a.subject.localeCompare(
-        b.subject,
-        "ja"
-      );
-    });
-
-  const workingTasks =
-    availableTasks.map(
-      (task) => ({
-        ...task,
-      })
-    );
-
-  const plan = [];
-
-  let taskIndex = 0;
-
-  for (const slot of analysis.freeSlots) {
-    let cursor = slot.start;
-
-    while (
-      cursor < slot.end &&
-      taskIndex <
-        workingTasks.length
-    ) {
-      const task =
-        workingTasks[taskIndex];
-
-      const remainingSlot =
-        slot.end - cursor;
-
-      const amount = Math.min(
-        task.remaining,
-        remainingSlot
-      );
-
-      if (amount <= 0) {
-        taskIndex++;
-        continue;
-      }
-
-      plan.push({
-        id: `${task.id}-${plan.length}`,
-
-        taskId: task.id,
-
-        subject: task.subject,
-
-        title: task.title,
-
-        priority: task.priority,
-
-        start:
-          minutesToTime(cursor),
-
-        end: minutesToTime(
-          cursor + amount
-        ),
-
-        minutes: amount,
-      });
-
-      cursor += amount;
-
-      task.remaining -= amount;
-
-      if (task.remaining <= 0) {
-        taskIndex++;
-      }
-    }
-  }
-
-  const totalRequired =
-    availableTasks.reduce(
-      (sum, task) =>
-        sum + task.remaining,
-      0
-    );
-
-  const totalPlanned =
-    plan.reduce(
-      (sum, item) =>
-        sum + item.minutes,
-      0
-    );
-
-  return {
-    plan,
-
-    totalAvailable:
-      analysis.totalAvailable,
-
-    totalRequired,
-
-    totalPlanned,
-
-    shortage: Math.max(
-      0,
-      totalRequired -
-        totalPlanned
-    ),
-
-    freeSlots:
-      analysis.freeSlots,
-
-    blocked:
-      analysis.blocked,
-
-    totalWindow:
-      analysis.totalWindow,
-
-    blockedDuringStudy:
-      analysis.blockedDuringStudy,
-  };
-}
-
-/* ========================================
-   Supabase conversion
-======================================== */
-
-function supabaseTaskToLocal(task) {
-  return normalizeTask({
-    id: task.id,
-    subject: task.subject,
-    title: task.title,
-    minutes: task.minutes,
-    priority: task.priority,
-    taskDate: task.task_date,
-    completed: task.completed,
-    studiedMinutes:
-      task.studied_minutes,
-  });
-}
-
-function localTaskToSupabase(
-  task,
-  userId
-) {
-  return {
-    id: task.id,
-    user_id: userId,
-
-    subject: task.subject,
-
-    title: task.title,
-
-    minutes:
-      Number(task.minutes) || 30,
-
-    priority:
-      Number(task.priority) || 3,
-
-    task_date: task.taskDate,
-
-    completed:
-      Boolean(task.completed),
-
-    studied_minutes:
-      Number(
-        task.studiedMinutes
-      ) || 0,
-  };
-}
-
-function supabaseScheduleToLocal(
-  schedule
-) {
-  return normalizeFixedSchedule({
-    id: schedule.id,
-    title: schedule.title,
-    category: schedule.category,
-    startTime:
-      schedule.start_time,
-    endTime:
-      schedule.end_time,
-    repeatType:
-      schedule.repeat_type,
-    scheduleDate:
-      schedule.schedule_date,
-  });
-}
-
-function localScheduleToSupabase(
-  schedule,
-  userId
-) {
-  return {
-    id: schedule.id,
-
-    user_id: userId,
-
-    title: schedule.title,
-
-    category:
-      schedule.category,
-
-    start_time:
-      schedule.startTime,
-
-    end_time:
-      schedule.endTime,
-
-    repeat_type:
-      schedule.repeatType,
-
-    schedule_date:
-      schedule.repeatType ===
-      "daily"
-        ? null
-        : schedule.scheduleDate,
-  };
-}
-
-/* ========================================
-   Auth
-======================================== */
-
-function AuthScreen({
-  onAuthenticated,
-}) {
-  const [mode, setMode] =
-    useState("login");
-
-  const [email, setEmail] =
-    useState("");
-
-  const [password, setPassword] =
-    useState("");
-
-  const [nickname, setNickname] =
-    useState("");
-
-  const [loading, setLoading] =
-    useState(false);
-
-  const [message, setMessage] =
-    useState("");
-
-  const [error, setError] =
-    useState("");
-
-  async function handleSubmit(e) {
-    e.preventDefault();
 
     setLoading(true);
 
-    setError("");
-    setMessage("");
-
     try {
-      if (!email || !password) {
-        throw new Error(
-          "メールアドレスとパスワードを入力してください。"
-        );
-      }
-
-      if (password.length < 6) {
-        throw new Error(
-          "パスワードは6文字以上にしてください。"
-        );
-      }
-
-      if (mode === "signup") {
-        const {
-          data,
-          error: signUpError,
-        } =
-          await supabase.auth.signUp({
-            email,
+      if (mode === "login") {
+        const { error } =
+          await supabase.auth.signInWithPassword({
+            email: email.trim(),
             password,
           });
 
-        if (signUpError) {
-          throw signUpError;
-        }
-
-        if (data.user) {
-          const {
-            error: profileError,
-          } = await supabase
-            .from("profiles")
-            .upsert({
-              id: data.user.id,
-
-              nickname:
-                nickname ||
-                "StudyFlow User",
-            });
-
-          if (profileError) {
-            console.warn(
-              "プロフィール保存エラー:",
-              profileError
-            );
-          }
-        }
-
-        if (!data.session) {
-          setMessage(
-            "登録しました。メール確認が必要な場合は、届いたメールを確認してください。"
-          );
-        } else {
-          onAuthenticated(
-            data.session.user
-          );
-        }
+        if (error) throw error;
       } else {
         const {
           data,
-          error: loginError,
-        } =
-          await supabase.auth.signInWithPassword(
-            {
-              email,
-              password,
-            }
-          );
+          error,
+        } = await supabase.auth.signUp({
+          email: email.trim(),
+          password,
+        });
 
-        if (loginError) {
-          throw loginError;
+        if (error) throw error;
+
+        if (data.user) {
+          await supabase.from("profiles").upsert({
+            id: data.user.id,
+            nickname: nickname.trim(),
+          });
         }
 
-        onAuthenticated(data.user);
+        setMessage(
+          "アカウントを作成しました。メール確認が必要な場合は確認してください。"
+        );
       }
-    } catch (err) {
-      setError(
-        err.message ||
-          "認証に失敗しました。"
+    } catch (error) {
+      setMessage(
+        error?.message ||
+          "認証に失敗しました。Supabaseの設定を確認してください。"
       );
     } finally {
       setLoading(false);
     }
-  }
+  };
 
   return (
-    <main className="auth-container">
-      <div className="auth-card">
-        <div
-          style={{
-            textAlign: "center",
-            marginBottom: 28,
-          }}
-        >
-          <div
-            style={{
-              fontSize: 42,
-              marginBottom: 8,
-            }}
-          >
-            ◇
+    <div className="app auth-page">
+      <main className="auth-container">
+        <div className="auth-brand">
+          <div className="brand-mark">S</div>
+          <div>
+            <div className="brand-name">StudyFlow</div>
+            <div className="brand-subtitle">
+              Your study, intelligently organized.
+            </div>
           </div>
-
-          <h1>StudyFlow</h1>
-
-          <p>
-            あなたの勉強時間を、
-            <br />
-            もっと効率的に。
-          </p>
         </div>
 
-        <form onSubmit={handleSubmit}>
-          {mode === "signup" && (
+        <div className="card auth-card">
+          <div className="auth-tabs">
+            <button
+              className={
+                mode === "login"
+                  ? "auth-tab active"
+                  : "auth-tab"
+              }
+              onClick={() => {
+                setMode("login");
+                setMessage("");
+              }}
+            >
+              ログイン
+            </button>
+
+            <button
+              className={
+                mode === "signup"
+                  ? "auth-tab active"
+                  : "auth-tab"
+              }
+              onClick={() => {
+                setMode("signup");
+                setMessage("");
+              }}
+            >
+              新規登録
+            </button>
+          </div>
+
+          <div className="auth-heading">
+            <h1>
+              {mode === "login"
+                ? "StudyFlowへようこそ"
+                : "StudyFlowを始めよう"}
+            </h1>
+
+            <p>
+              {mode === "login"
+                ? "あなたの学習計画を続きから再開できます。"
+                : "勉強時間を、もっとスマートに。"}
+            </p>
+          </div>
+
+          <form onSubmit={submit}>
+            {mode === "signup" && (
+              <label>
+                ニックネーム
+                <input
+                  value={nickname}
+                  onChange={(e) =>
+                    setNickname(e.target.value)
+                  }
+                  placeholder="例：Nicol"
+                />
+              </label>
+            )}
+
             <label>
-              ニックネーム
+              メールアドレス
               <input
-                value={nickname}
+                type="email"
+                value={email}
                 onChange={(e) =>
-                  setNickname(
-                    e.target.value
-                  )
+                  setEmail(e.target.value)
                 }
-                placeholder="ニックネーム"
+                placeholder="example@email.com"
               />
             </label>
-          )}
 
-          <label>
-            メールアドレス
-            <input
-              type="email"
-              value={email}
-              onChange={(e) =>
-                setEmail(e.target.value)
-              }
-              placeholder="example@email.com"
-            />
-          </label>
+            <label>
+              パスワード
+              <input
+                type="password"
+                value={password}
+                onChange={(e) =>
+                  setPassword(e.target.value)
+                }
+                placeholder="パスワード"
+              />
+            </label>
 
-          <label>
-            パスワード
-            <input
-              type="password"
-              value={password}
-              onChange={(e) =>
-                setPassword(
-                  e.target.value
-                )
-              }
-              placeholder="6文字以上"
-            />
-          </label>
+            {message && (
+              <div className="message-box">
+                {message}
+              </div>
+            )}
 
-          {error && (
-            <p className="error">
-              {error}
-            </p>
-          )}
-
-          {message && (
-            <p className="success">
-              {message}
-            </p>
-          )}
-
-          <button
-            type="submit"
-            disabled={loading}
-          >
-            {loading
-              ? "処理中..."
-              : mode === "login"
-              ? "ログイン"
-              : "アカウントを作成"}
-          </button>
-        </form>
-
-        <button
-          className="secondary-button"
-          style={{
-            width: "100%",
-            marginTop: 12,
-          }}
-          onClick={() => {
-            setMode(
-              mode === "login"
-                ? "signup"
-                : "login"
-            );
-
-            setError("");
-            setMessage("");
-          }}
-        >
-          {mode === "login"
-            ? "新規登録はこちら"
-            : "ログインはこちら"}
-        </button>
-      </div>
-    </main>
+            <button
+              className="primary-button auth-submit"
+              disabled={loading}
+              type="submit"
+            >
+              {loading
+                ? "処理中..."
+                : mode === "login"
+                ? "ログイン"
+                : "アカウントを作成"}
+            </button>
+          </form>
+        </div>
+      </main>
+    </div>
   );
 }
 
-/* ========================================
-   App
-======================================== */
+/*
+==================================================
+ App
+==================================================
+*/
 
 function App() {
-  const [user, setUser] =
-    useState(null);
+  const [session, setSession] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
 
-  const [authLoading, setAuthLoading] =
-    useState(true);
+  const [tasks, setTasks] = useState([]);
+  const [fixedSchedules, setFixedSchedules] =
+    useState([]);
 
-  const [activeTab, setActiveTab] =
-    useState("today");
+  const [settings, setSettings] = useState(
+    DEFAULT_SETTINGS
+  );
+
+  const [profile, setProfile] = useState({
+    nickname: "",
+  });
+
+  const [studyLogs, setStudyLogs] = useState([]);
+
+  const [loadingData, setLoadingData] = useState(false);
+
+  const [activeTab, setActiveTab] = useState("today");
 
   const [selectedDate, setSelectedDate] =
     useState(todayString());
 
-  const [tasks, setTasks] =
-    useState([]);
+  const [calendarMonth, setCalendarMonth] =
+    useState(todayString());
 
-  const [
-    fixedSchedules,
-    setFixedSchedules,
-  ] = useState([]);
+  const [message, setMessage] = useState("");
 
-  const [settings, setSettings] =
-    useState(DEFAULT_SETTINGS);
+  /*
+  タスクフォーム
+  */
 
-  const [settingsDraft, setSettingsDraft] =
-    useState(DEFAULT_SETTINGS);
+  const [taskForm, setTaskForm] = useState({
+    subject: "数学",
+    title: "",
+    minutes: 45,
+    priority: 3,
+    task_date: todayString(),
+  });
 
-  const [loadingData, setLoadingData] =
-    useState(false);
+  const [editingTaskId, setEditingTaskId] =
+    useState(null);
 
-  const [syncMessage, setSyncMessage] =
-    useState("");
+  /*
+  固定予定フォーム
+  */
 
-  /* タスク追加 */
-  const [newTask, setNewTask] =
-    useState({
-      subject: "数学",
-      title: "",
-      minutes: 45,
-      priority: 3,
-    });
+  const [fixedForm, setFixedForm] = useState({
+    title: "",
+    category: "other",
+    start_time: "18:00",
+    end_time: "19:00",
+    repeat_type: "today",
+    schedule_date: todayString(),
+  });
 
-  /* 固定予定 */
-  const [newSchedule, setNewSchedule] =
-    useState({
-      title: "",
-      category: "school",
-      startTime: "09:00",
-      endTime: "10:00",
-      repeatType: "today",
-    });
+  /*
+  タイマー
+  */
 
-  /* タイマー */
   const [timerTaskId, setTimerTaskId] =
     useState("");
 
@@ -1217,367 +956,379 @@ function App() {
   const [timerRunning, setTimerRunning] =
     useState(false);
 
-  /* カレンダー */
-  const [calendarMonth, setCalendarMonth] =
-    useState(todayString());
+  /*
+  設定編集
+  */
 
-  /* ========================================
-     Auth
-  ======================================== */
+  const [settingsForm, setSettingsForm] =
+    useState(DEFAULT_SETTINGS);
+
+  const [nicknameForm, setNicknameForm] =
+    useState("");
+
+  /*
+  ================================================
+  Auth初期化
+  ================================================
+  */
 
   useEffect(() => {
     let mounted = true;
 
-    async function loadSession() {
+    const loadSession = async () => {
       const {
-        data: { session },
-      } =
-        await supabase.auth.getSession();
+        data: { session: currentSession },
+      } = await supabase.auth.getSession();
 
       if (mounted) {
-        setUser(
-          session?.user || null
-        );
-
+        setSession(currentSession);
         setAuthLoading(false);
       }
-    }
+    };
 
     loadSession();
 
     const {
       data: { subscription },
-    } =
-      supabase.auth.onAuthStateChange(
-        (_event, session) => {
-          setUser(
-            session?.user || null
-          );
+    } = supabase.auth.onAuthStateChange(
+      (_event, currentSession) => {
+        if (mounted) {
+          setSession(currentSession);
         }
-      );
+      }
+    );
 
     return () => {
       mounted = false;
-
       subscription.unsubscribe();
     };
   }, []);
 
-  /* ========================================
-     Supabase読み込み
-  ======================================== */
+  /*
+  ================================================
+  データ読み込み
+  ================================================
+  */
 
-  async function loadSupabaseData(
-    currentUser
-  ) {
-    if (!currentUser) return;
+  const loadData = useCallback(async () => {
+    if (!session?.user?.id) return;
+
+    const userId = session.user.id;
 
     setLoadingData(true);
-    setSyncMessage("");
+    setMessage("");
 
     try {
       const [
         tasksResult,
-        schedulesResult,
+        fixedResult,
         settingsResult,
+        profileResult,
+        logsResult,
       ] = await Promise.all([
         supabase
           .from("tasks")
           .select("*")
-          .eq(
-            "user_id",
-            currentUser.id
-          )
-          .order(
-            "task_date",
-            {
-              ascending: true,
-            }
-          ),
+          .eq("user_id", userId)
+          .order("task_date", {
+            ascending: true,
+          })
+          .order("created_at", {
+            ascending: true,
+          }),
 
         supabase
           .from("fixed_schedules")
           .select("*")
-          .eq(
-            "user_id",
-            currentUser.id
-          )
-          .order(
-            "start_time",
-            {
-              ascending: true,
-            }
-          ),
+          .eq("user_id", userId)
+          .order("start_time", {
+            ascending: true,
+          }),
 
         supabase
           .from("study_settings")
           .select("*")
-          .eq(
-            "user_id",
-            currentUser.id
-          )
+          .eq("user_id", userId)
           .maybeSingle(),
+
+        supabase
+          .from("profiles")
+          .select("*")
+          .eq("id", userId)
+          .maybeSingle(),
+
+        supabase
+          .from("study_logs")
+          .select("*")
+          .eq("user_id", userId)
+          .order("study_date", {
+            ascending: true,
+          }),
       ]);
 
       if (tasksResult.error) {
-        throw tasksResult.error;
+        console.error(tasksResult.error);
       }
 
-      if (schedulesResult.error) {
-        throw schedulesResult.error;
+      if (fixedResult.error) {
+        console.error(fixedResult.error);
       }
 
       if (settingsResult.error) {
-        throw settingsResult.error;
+        console.error(settingsResult.error);
       }
+
+      if (profileResult.error) {
+        console.error(profileResult.error);
+      }
+
+      if (logsResult.error) {
+        console.error(logsResult.error);
+      }
+
+      const local = getLocalData();
 
       const remoteTasks =
-        tasksResult.data?.map(
-          supabaseTaskToLocal
+        tasksResult.data?.map((task) =>
+          normalizeTask(task, userId)
         ) || [];
 
-      const remoteSchedules =
-        schedulesResult.data?.map(
-          supabaseScheduleToLocal
+      const remoteFixed =
+        fixedResult.data?.map((schedule) =>
+          normalizeFixedSchedule(schedule, userId)
         ) || [];
 
-      const remoteSettings =
+      const remoteSettings = normalizeSettings(
         settingsResult.data
-          ? {
-              wakeUpTime:
-                settingsResult.data
-                  .wake_up_time
-                  ?.slice(0, 5) ||
-                DEFAULT_SETTINGS.wakeUpTime,
-
-              morningPrepMinutes:
-                settingsResult.data
-                  .morning_prep_minutes ??
-                DEFAULT_SETTINGS.morningPrepMinutes,
-
-              useStudyRoom:
-                settingsResult.data
-                  .use_study_room ??
-                DEFAULT_SETTINGS.useStudyRoom,
-
-              travelMinutes:
-                settingsResult.data
-                  .travel_minutes ??
-                DEFAULT_SETTINGS.travelMinutes,
-
-              studyStart:
-                settingsResult.data
-                  .study_start
-                  ?.slice(0, 5) ||
-                DEFAULT_SETTINGS.studyStart,
-
-              studyEnd:
-                settingsResult.data
-                  .study_end
-                  ?.slice(0, 5) ||
-                DEFAULT_SETTINGS.studyEnd,
-
-              defaultTaskMinutes:
-                settingsResult.data
-                  .default_task_minutes ??
-                DEFAULT_SETTINGS.defaultTaskMinutes,
-
-              breakMinutes:
-                DEFAULT_SETTINGS.breakMinutes,
-
-              minimumStudyBlock:
-                DEFAULT_SETTINGS.minimumStudyBlock,
-            }
-          : null;
-
-      const localData =
-        getLocalData();
+      );
 
       /*
-         初回のみlocalStorageから移行
-      */
+       初回ログイン時
+       */
+
       if (
         remoteTasks.length === 0 &&
-        remoteSchedules.length === 0 &&
-        !remoteSettings &&
-        localData
+        remoteFixed.length === 0 &&
+        !settingsResult.data &&
+        local?.tasks?.length
       ) {
-        const localTasks =
-          localData.tasks.map(
-            normalizeTask
-          );
+        const localTasks = local.tasks.map((task) =>
+          normalizeTask(task, userId)
+        );
 
-        const localSchedules =
-          localData.fixedSchedules.map(
-            normalizeFixedSchedule
-          );
+        const localFixed =
+          local.fixedSchedules?.map((schedule) =>
+            normalizeFixedSchedule(
+              schedule,
+              userId
+            )
+          ) || [];
 
-        if (localTasks.length) {
-          const { error } =
-            await supabase
-              .from("tasks")
-              .upsert(
-                localTasks.map(
-                  (task) =>
-                    localTaskToSupabase(
-                      task,
-                      currentUser.id
-                    )
-                )
-              );
+        const localSettings = normalizeSettings(
+          local.settings
+        );
 
-          if (error) {
-            throw error;
-          }
+        await supabase.from("tasks").insert(
+          localTasks.map((task) => ({
+            id: task.id,
+            user_id: userId,
+            subject: task.subject,
+            title: task.title,
+            minutes: task.minutes,
+            priority: task.priority,
+            task_date: task.task_date,
+            completed: task.completed,
+            studied_minutes: task.studied_minutes,
+          }))
+        );
+
+        if (localFixed.length) {
+          await supabase
+            .from("fixed_schedules")
+            .insert(
+              localFixed.map((schedule) => ({
+                id: schedule.id,
+                user_id: userId,
+                title: schedule.title,
+                category: schedule.category,
+                start_time:
+                  schedule.start_time,
+                end_time: schedule.end_time,
+                repeat_type:
+                  schedule.repeat_type,
+                schedule_date:
+                  schedule.schedule_date,
+              }))
+            );
         }
 
-        if (localSchedules.length) {
-          const { error } =
-            await supabase
-              .from("fixed_schedules")
-              .upsert(
-                localSchedules.map(
-                  (schedule) =>
-                    localScheduleToSupabase(
-                      schedule,
-                      currentUser.id
-                    )
-                )
-              );
-
-          if (error) {
-            throw error;
-          }
-        }
-
-        const localSettings = {
-          ...DEFAULT_SETTINGS,
-          ...localData.settings,
-        };
-
-        const {
-          error: settingsError,
-        } = await supabase
+        await supabase
           .from("study_settings")
           .upsert({
-            user_id:
-              currentUser.id,
-
+            user_id: userId,
             wake_up_time:
               localSettings.wakeUpTime,
-
             morning_prep_minutes:
-              Number(
-                localSettings.morningPrepMinutes
-              ),
-
+              localSettings.morningPrepMinutes,
             use_study_room:
-              Boolean(
-                localSettings.useStudyRoom
-              ),
-
+              localSettings.useStudyRoom,
             travel_minutes:
-              Number(
-                localSettings.travelMinutes
-              ),
-
+              localSettings.travelMinutes,
             study_start:
               localSettings.studyStart,
-
             study_end:
               localSettings.studyEnd,
-
             default_task_minutes:
-              Number(
-                localSettings.defaultTaskMinutes
-              ),
-
-            updated_at:
-              new Date().toISOString(),
+              localSettings.defaultTaskMinutes,
           });
 
-        if (settingsError) {
-          throw settingsError;
+        setTasks(localTasks);
+        setFixedSchedules(localFixed);
+        setSettings(localSettings);
+        setSettingsForm(localSettings);
+      } else {
+        /*
+         Supabaseにデータがある場合
+        */
+
+        let nextTasks = remoteTasks;
+        let nextFixed = remoteFixed;
+        let nextSettings = remoteSettings;
+
+        /*
+         完全な新規ユーザーなら
+         初期タスクを作成
+        */
+
+        if (
+          remoteTasks.length === 0 &&
+          !local?.tasks?.length
+        ) {
+          const initialTasks =
+            DEFAULT_TASKS.map((task) =>
+              normalizeTask(
+                {
+                  ...task,
+                  task_date: todayString(),
+                },
+                userId
+              )
+            );
+
+          const { data: insertedTasks } =
+            await supabase
+              .from("tasks")
+              .insert(
+                initialTasks.map((task) => ({
+                  id: task.id,
+                  user_id: userId,
+                  subject: task.subject,
+                  title: task.title,
+                  minutes: task.minutes,
+                  priority: task.priority,
+                  task_date: task.task_date,
+                  completed: false,
+                  studied_minutes: 0,
+                }))
+              )
+              .select();
+
+          nextTasks =
+            insertedTasks?.map((task) =>
+              normalizeTask(task, userId)
+            ) || initialTasks;
         }
 
-        setTasks(localTasks);
-
-        setFixedSchedules(
-          localSchedules
-        );
-
-        setSettings(
-          localSettings
-        );
-
-        setSettingsDraft(
-          localSettings
-        );
-
-        saveLocalData({
-          tasks: localTasks,
-          fixedSchedules:
-            localSchedules,
-          settings:
-            localSettings,
-        });
-
-        setSyncMessage(
-          "これまでのデータをSupabaseへ移行しました。"
-        );
-      } else {
-        const finalSettings =
-          remoteSettings ||
-          DEFAULT_SETTINGS;
-
-        setTasks(remoteTasks);
-
-        setFixedSchedules(
-          remoteSchedules
-        );
-
-        setSettings(
-          finalSettings
-        );
-
-        setSettingsDraft(
-          finalSettings
-        );
-
-        saveLocalData({
-          tasks: remoteTasks,
-          fixedSchedules:
-            remoteSchedules,
-          settings:
-            finalSettings,
-        });
+        setTasks(nextTasks);
+        setFixedSchedules(nextFixed);
+        setSettings(nextSettings);
+        setSettingsForm(nextSettings);
       }
+
+      /*
+       Profile
+      */
+
+      let nextProfile =
+        profileResult.data || null;
+
+      if (!nextProfile) {
+        const nickname =
+          session.user.email?.split("@")[0] ||
+          "StudyFlow User";
+
+        const { data } = await supabase
+          .from("profiles")
+          .upsert({
+            id: userId,
+            nickname,
+          })
+          .select()
+          .maybeSingle();
+
+        nextProfile = data || {
+          nickname,
+        };
+      }
+
+      setProfile({
+        nickname:
+          nextProfile?.nickname ||
+          session.user.email?.split("@")[0] ||
+          "",
+      });
+
+      setNicknameForm(
+        nextProfile?.nickname ||
+          session.user.email?.split("@")[0] ||
+          ""
+      );
+
+      setStudyLogs(logsResult.data || []);
+
+      /*
+       localStorageにもミラー
+      */
+
+      saveLocalData({
+        tasks:
+          remoteTasks.length > 0
+            ? remoteTasks
+            : tasks,
+        fixedSchedules:
+          remoteFixed.length > 0
+            ? remoteFixed
+            : fixedSchedules,
+        settings: remoteSettings,
+      });
     } catch (error) {
       console.error(error);
-
-      setSyncMessage(
-        `Supabaseの読み込みに失敗しました: ${
-          error.message ||
-          "Unknown error"
-        }`
+      setMessage(
+        "データ読み込み中に問題が発生しました。"
       );
     } finally {
       setLoadingData(false);
     }
-  }
+  }, [session]);
 
   useEffect(() => {
-    if (user) {
-      loadSupabaseData(user);
+    if (session) {
+      loadData();
+    } else {
+      setTasks([]);
+      setFixedSchedules([]);
+      setStudyLogs([]);
     }
-  }, [user]);
+  }, [session, loadData]);
 
-  /* ========================================
-     Local backup
-  ======================================== */
+  /*
+  ================================================
+  localStorageミラー
+  ================================================
+  */
 
   useEffect(() => {
-    if (!user) return;
+    if (!session) return;
 
     saveLocalData({
       tasks,
@@ -1588,2433 +1339,2576 @@ function App() {
     tasks,
     fixedSchedules,
     settings,
-    user,
+    session,
   ]);
 
-  /* ========================================
-     Task
-  ======================================== */
+  /*
+  ================================================
+  Timer
+  ================================================
+  */
 
-  async function addTask() {
-    if (!newTask.title.trim()) {
-      alert(
-        "タスク名を入力してください。"
-      );
+  useEffect(() => {
+    if (!timerRunning) return;
 
+    const interval = setInterval(() => {
+      setTimerSeconds((seconds) => seconds + 1);
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [timerRunning]);
+
+  const timerDisplay = useMemo(() => {
+    const hours = Math.floor(
+      timerSeconds / 3600
+    );
+
+    const minutes = Math.floor(
+      (timerSeconds % 3600) / 60
+    );
+
+    const seconds = timerSeconds % 60;
+
+    return `${String(hours).padStart(2, "0")}:${String(
+      minutes
+    ).padStart(2, "0")}:${String(seconds).padStart(
+      2,
+      "0"
+    )}`;
+  }, [timerSeconds]);
+
+  const saveTimerSession = async () => {
+    if (!timerTaskId || timerSeconds <= 0) {
+      setTimerRunning(false);
       return;
     }
 
-    const task = normalizeTask({
-      ...newTask,
+    const studiedMinutes = Math.max(
+      1,
+      Math.floor(timerSeconds / 60)
+    );
 
-      taskDate: selectedDate,
+    const task = tasks.find(
+      (item) => item.id === timerTaskId
+    );
 
-      completed: false,
+    if (!task) {
+      setTimerRunning(false);
+      return;
+    }
 
-      studiedMinutes: 0,
-    });
+    const nextStudied =
+      Number(task.studied_minutes || 0) +
+      studiedMinutes;
 
-    setTasks((prev) => [
-      ...prev,
-      task,
-    ]);
+    const nextCompleted =
+      nextStudied >= Number(task.minutes || 0);
 
-    const { error } =
+    const updatedTask = {
+      ...task,
+      studied_minutes: nextStudied,
+      completed: nextCompleted,
+    };
+
+    setTasks((current) =>
+      current.map((item) =>
+        item.id === task.id
+          ? updatedTask
+          : item
+      )
+    );
+
+    if (session?.user?.id) {
       await supabase
         .from("tasks")
-        .insert(
-          localTaskToSupabase(
-            task,
-            user.id
-          )
-        );
+        .update({
+          studied_minutes: nextStudied,
+          completed: nextCompleted,
+        })
+        .eq("id", task.id)
+        .eq("user_id", session.user.id);
 
-    if (error) {
-      console.error(error);
+      /*
+       study_logsを更新
+      */
 
-      alert(
-        `保存に失敗しました: ${error.message}`
+      const today = todayString();
+
+      const existing = studyLogs.find(
+        (log) => log.study_date === today
       );
 
-      setTasks((prev) =>
-        prev.filter(
-          (item) =>
-            item.id !== task.id
+      const nextLogMinutes =
+        Number(existing?.minutes || 0) +
+        studiedMinutes;
+
+      const { data } = await supabase
+        .from("study_logs")
+        .upsert(
+          {
+            user_id: session.user.id,
+            study_date: today,
+            minutes: nextLogMinutes,
+          },
+          {
+            onConflict:
+              "user_id,study_date",
+          }
+        )
+        .select()
+        .maybeSingle();
+
+      if (data) {
+        setStudyLogs((current) => {
+          const exists = current.some(
+            (log) =>
+              log.study_date === today
+          );
+
+          if (exists) {
+            return current.map((log) =>
+              log.study_date === today
+                ? data
+                : log
+            );
+          }
+
+          return [...current, data];
+        });
+      }
+    }
+
+    setTimerSeconds(0);
+    setTimerRunning(false);
+
+    setMessage(
+      `${formatMinutes(
+        studiedMinutes
+      )}の学習時間を記録しました。`
+    );
+  };
+
+  const resetTimer = () => {
+    setTimerRunning(false);
+    setTimerSeconds(0);
+  };
+
+  /*
+  ================================================
+  Task CRUD
+  ================================================
+  */
+
+  const resetTaskForm = () => {
+    setTaskForm({
+      subject: "数学",
+      title: "",
+      minutes: settings.defaultTaskMinutes,
+      priority: 3,
+      task_date: selectedDate,
+    });
+
+    setEditingTaskId(null);
+  };
+
+  const saveTask = async (event) => {
+    event.preventDefault();
+
+    const title = taskForm.title.trim();
+
+    if (!title) {
+      setMessage("タスク名を入力してください。");
+      return;
+    }
+
+    const userId = session?.user?.id;
+
+    if (editingTaskId) {
+      const oldTask = tasks.find(
+        (task) => task.id === editingTaskId
+      );
+
+      if (!oldTask) return;
+
+      const updated = {
+        ...oldTask,
+        subject: taskForm.subject,
+        title,
+        minutes: Math.max(
+          1,
+          Number(taskForm.minutes) || 45
+        ),
+        priority: Math.min(
+          5,
+          Math.max(
+            1,
+            Number(taskForm.priority) || 3
+          )
+        ),
+        task_date:
+          taskForm.task_date || selectedDate,
+      };
+
+      setTasks((current) =>
+        current.map((task) =>
+          task.id === editingTaskId
+            ? updated
+            : task
         )
       );
 
-      return;
+      if (userId) {
+        await supabase
+          .from("tasks")
+          .update({
+            subject: updated.subject,
+            title: updated.title,
+            minutes: updated.minutes,
+            priority: updated.priority,
+            task_date: updated.task_date,
+          })
+          .eq("id", editingTaskId)
+          .eq("user_id", userId);
+      }
+
+      setMessage("タスクを更新しました。");
+    } else {
+      const newTask = normalizeTask(
+        {
+          id: createId(),
+          user_id: userId,
+          subject: taskForm.subject,
+          title,
+          minutes:
+            Number(taskForm.minutes) || 45,
+          priority:
+            Number(taskForm.priority) || 3,
+          task_date:
+            taskForm.task_date || selectedDate,
+          completed: false,
+          studied_minutes: 0,
+        },
+        userId
+      );
+
+      setTasks((current) => [
+        ...current,
+        newTask,
+      ]);
+
+      if (userId) {
+        await supabase.from("tasks").insert({
+          id: newTask.id,
+          user_id: userId,
+          subject: newTask.subject,
+          title: newTask.title,
+          minutes: newTask.minutes,
+          priority: newTask.priority,
+          task_date: newTask.task_date,
+          completed: false,
+          studied_minutes: 0,
+        });
+      }
+
+      setMessage("タスクを追加しました。");
     }
 
-    setNewTask({
-      subject: "数学",
-      title: "",
-      minutes:
-        Number(
-          settings.defaultTaskMinutes
-        ) || 45,
-      priority: 3,
-    });
-  }
+    resetTaskForm();
+  };
 
-  async function toggleTask(task) {
+  const editTask = (task) => {
+    setEditingTaskId(task.id);
+
+    setTaskForm({
+      subject: task.subject,
+      title: task.title,
+      minutes: task.minutes,
+      priority: task.priority,
+      task_date: task.task_date,
+    });
+
+    setActiveTab("today");
+
+    window.scrollTo({
+      top: 0,
+      behavior: "smooth",
+    });
+  };
+
+  const toggleTask = async (task) => {
+    const completed = !task.completed;
+
     const updated = {
       ...task,
-
-      completed:
-        !task.completed,
+      completed,
     };
 
-    setTasks((prev) =>
-      prev.map((item) =>
+    setTasks((current) =>
+      current.map((item) =>
         item.id === task.id
           ? updated
           : item
       )
     );
 
-    const { error } =
+    if (session?.user?.id) {
       await supabase
         .from("tasks")
         .update({
-          completed:
-            updated.completed,
+          completed,
         })
         .eq("id", task.id)
-        .eq(
-          "user_id",
-          user.id
-        );
-
-    if (error) {
-      console.error(error);
+        .eq("user_id", session.user.id);
     }
-  }
+  };
 
-  async function deleteTask(
-    taskId
-  ) {
-    const previous = tasks;
+  const deleteTask = async (taskId) => {
+    if (
+      !window.confirm(
+        "このタスクを削除しますか？"
+      )
+    ) {
+      return;
+    }
 
-    setTasks((prev) =>
-      prev.filter(
-        (task) =>
-          task.id !== taskId
+    setTasks((current) =>
+      current.filter(
+        (task) => task.id !== taskId
       )
     );
 
-    const { error } =
+    if (session?.user?.id) {
       await supabase
         .from("tasks")
         .delete()
         .eq("id", taskId)
-        .eq(
-          "user_id",
-          user.id
-        );
-
-    if (error) {
-      console.error(error);
-
-      setTasks(previous);
-
-      alert(
-        `削除に失敗しました: ${error.message}`
-      );
+        .eq("user_id", session.user.id);
     }
-  }
 
-  /* ========================================
-     Fixed Schedule
-  ======================================== */
+    if (timerTaskId === taskId) {
+      resetTimer();
+      setTimerTaskId("");
+    }
+  };
 
-  async function addSchedule() {
-    if (!newSchedule.title.trim()) {
-      alert(
-        "予定名を入力してください。"
-      );
+  /*
+  ================================================
+  Fixed schedule
+  ================================================
+  */
 
+  const addFixedSchedule = async (event) => {
+    event.preventDefault();
+
+    if (!fixedForm.title.trim()) {
+      setMessage("予定名を入力してください。");
       return;
     }
 
     if (
-      timeToMinutes(
-        newSchedule.endTime
-      ) <=
-      timeToMinutes(
-        newSchedule.startTime
-      )
+      timeToMinutes(fixedForm.end_time) <=
+      timeToMinutes(fixedForm.start_time)
     ) {
-      alert(
+      setMessage(
         "終了時刻は開始時刻より後にしてください。"
       );
-
       return;
     }
 
-    const schedule =
-      normalizeFixedSchedule({
-        ...newSchedule,
+    const schedule = normalizeFixedSchedule(
+      {
+        id: createId(),
+        user_id: session?.user?.id,
+        ...fixedForm,
+      },
+      session?.user?.id
+    );
 
-        scheduleDate:
-          selectedDate,
-      });
-
-    setFixedSchedules((prev) => [
-      ...prev,
+    setFixedSchedules((current) => [
+      ...current,
       schedule,
     ]);
 
-    const { error } =
+    if (session?.user?.id) {
       await supabase
         .from("fixed_schedules")
-        .insert(
-          localScheduleToSupabase(
-            schedule,
-            user.id
-          )
-        );
-
-    if (error) {
-      console.error(error);
-
-      alert(
-        `保存に失敗しました: ${error.message}`
-      );
-
-      setFixedSchedules((prev) =>
-        prev.filter(
-          (item) =>
-            item.id !==
-            schedule.id
-        )
-      );
-
-      return;
+        .insert({
+          id: schedule.id,
+          user_id: session.user.id,
+          title: schedule.title,
+          category: schedule.category,
+          start_time: schedule.start_time,
+          end_time: schedule.end_time,
+          repeat_type: schedule.repeat_type,
+          schedule_date:
+            schedule.schedule_date,
+        });
     }
 
-    setNewSchedule({
+    setFixedForm({
       title: "",
-      category: "school",
-      startTime: "09:00",
-      endTime: "10:00",
-      repeatType: "today",
+      category: "other",
+      start_time: "18:00",
+      end_time: "19:00",
+      repeat_type: "today",
+      schedule_date: selectedDate,
     });
-  }
 
-  async function deleteSchedule(
+    setMessage("固定予定を追加しました。");
+  };
+
+  const deleteFixedSchedule = async (
     scheduleId
-  ) {
-    const previous =
-      fixedSchedules;
-
-    setFixedSchedules((prev) =>
-      prev.filter(
-        (item) =>
-          item.id !==
-          scheduleId
+  ) => {
+    setFixedSchedules((current) =>
+      current.filter(
+        (schedule) =>
+          schedule.id !== scheduleId
       )
     );
 
-    const { error } =
+    if (session?.user?.id) {
       await supabase
         .from("fixed_schedules")
         .delete()
-        .eq(
-          "id",
-          scheduleId
-        )
-        .eq(
-          "user_id",
-          user.id
-        );
-
-    if (error) {
-      console.error(error);
-
-      setFixedSchedules(
-        previous
-      );
-
-      alert(
-        `削除に失敗しました: ${error.message}`
-      );
+        .eq("id", scheduleId)
+        .eq("user_id", session.user.id);
     }
-  }
+  };
 
-  /* ========================================
-     Settings
-  ======================================== */
+  /*
+  ================================================
+  Settings
+  ================================================
+  */
 
-  async function saveSettings() {
-    const next = {
-      ...DEFAULT_SETTINGS,
-      ...settingsDraft,
-    };
+  const saveSettings = async (event) => {
+    event.preventDefault();
 
     if (
-      timeToMinutes(
-        next.studyEnd
-      ) <=
-      timeToMinutes(
-        next.studyStart
-      )
+      timeToMinutes(settingsForm.studyEnd) <=
+      timeToMinutes(settingsForm.studyStart)
     ) {
-      alert(
-        "学習終了時刻は学習開始時刻より後にしてください。"
+      setMessage(
+        "勉強終了時刻は開始時刻より後にしてください。"
       );
-
       return;
     }
 
-    if (
-      Number(
-        next.morningPrepMinutes
-      ) < 0
-    ) {
-      alert(
-        "朝の支度時間を確認してください。"
-      );
+    const nextSettings =
+      normalizeSettings(settingsForm);
 
-      return;
-    }
+    setSettings(nextSettings);
 
-    setSettings(next);
-
-    const { error } =
-      await supabase
+    if (session?.user?.id) {
+      const { error } = await supabase
         .from("study_settings")
         .upsert({
-          user_id: user.id,
-
+          user_id: session.user.id,
           wake_up_time:
-            next.wakeUpTime,
-
+            nextSettings.wakeUpTime,
           morning_prep_minutes:
-            Number(
-              next.morningPrepMinutes
-            ),
-
+            nextSettings.morningPrepMinutes,
           use_study_room:
-            Boolean(
-              next.useStudyRoom
-            ),
-
+            nextSettings.useStudyRoom,
           travel_minutes:
-            Number(
-              next.travelMinutes
-            ),
-
+            nextSettings.travelMinutes,
           study_start:
-            next.studyStart,
-
+            nextSettings.studyStart,
           study_end:
-            next.studyEnd,
-
+            nextSettings.studyEnd,
           default_task_minutes:
-            Number(
-              next.defaultTaskMinutes
-            ),
-
-          updated_at:
-            new Date().toISOString(),
+            nextSettings.defaultTaskMinutes,
         });
 
-    if (error) {
-      console.error(error);
-
-      alert(
-        `設定の保存に失敗しました: ${error.message}`
-      );
-
-      return;
-    }
-
-    setSyncMessage(
-      "設定を保存しました。"
-    );
-  }
-
-  /* ========================================
-     Timer
-  ======================================== */
-
-  useEffect(() => {
-    if (!timerRunning) {
-      return;
-    }
-
-    const interval =
-      setInterval(() => {
-        setTimerSeconds(
-          (previous) =>
-            previous + 1
+      if (error) {
+        console.error(error);
+        setMessage(
+          "設定保存に失敗しました。"
         );
-      }, 1000);
+        return;
+      }
+    }
 
-    return () =>
-      clearInterval(interval);
-  }, [timerRunning]);
+    setMessage("設定を保存しました。");
+  };
 
-  async function finishTimer() {
-    if (!timerTaskId) {
-      alert(
-        "タスクを選択してください。"
+  const saveNickname = async (event) => {
+    event.preventDefault();
+
+    const nickname = nicknameForm.trim();
+
+    if (!nickname) {
+      setMessage(
+        "ニックネームを入力してください。"
       );
-
       return;
     }
 
-    if (timerSeconds <= 0) {
-      alert(
-        "タイマーを開始してください。"
-      );
+    setProfile({ nickname });
 
-      return;
-    }
-
-    const studiedMinutes =
-      Math.max(
-        1,
-        Math.floor(
-          timerSeconds / 60
-        )
-      );
-
-    const target =
-      tasks.find(
-        (task) =>
-          task.id ===
-          timerTaskId
-      );
-
-    if (!target) {
-      return;
-    }
-
-    const updated = {
-      ...target,
-
-      studiedMinutes:
-        Number(
-          target.studiedMinutes ||
-            0
-        ) + studiedMinutes,
-    };
-
-    setTasks((prev) =>
-      prev.map((task) =>
-        task.id === target.id
-          ? updated
-          : task
-      )
-    );
-
-    const { error } =
+    if (session?.user?.id) {
       await supabase
-        .from("tasks")
-        .update({
-          studied_minutes:
-            updated.studiedMinutes,
-        })
-        .eq(
-          "id",
-          target.id
-        )
-        .eq(
-          "user_id",
-          user.id
-        );
-
-    if (error) {
-      console.error(error);
-
-      alert(
-        `学習記録の保存に失敗しました: ${error.message}`
-      );
-
-      return;
+        .from("profiles")
+        .upsert({
+          id: session.user.id,
+          nickname,
+        });
     }
 
-    setTimerSeconds(0);
+    setMessage("プロフィールを更新しました。");
+  };
 
-    setTimerRunning(false);
+  /*
+  ================================================
+  自動計画
+  ================================================
+  */
 
-    setSyncMessage(
-      `${studiedMinutes}分の学習を記録しました。`
-    );
-  }
-
-  function resetTimer() {
-    setTimerRunning(false);
-    setTimerSeconds(0);
-  }
-
-  /* ========================================
-     Derived data
-  ======================================== */
-
-  const timeAnalysis =
-    useMemo(
-      () =>
-        analyzeDay(
-          selectedDate,
-          settings,
-          fixedSchedules
-        ),
-      [
-        selectedDate,
-        settings,
-        fixedSchedules,
-      ]
-    );
-
-  const planData =
-    useMemo(
-      () =>
-        generatePlan(
-          selectedDate,
-          tasks,
-          settings,
-          fixedSchedules
-        ),
-      [
-        selectedDate,
+  const planData = useMemo(
+    () =>
+      generatePlan({
+        dateString: selectedDate,
         tasks,
         settings,
         fixedSchedules,
-      ]
-    );
+      }),
+    [
+      selectedDate,
+      tasks,
+      settings,
+      fixedSchedules,
+    ]
+  );
 
-  const selectedDateTasks =
-    useMemo(
-      () =>
-        tasks.filter(
-          (task) =>
-            task.taskDate ===
-            selectedDate
-        ),
-      [tasks, selectedDate]
-    );
+  /*
+  ================================================
+  Today's tasks
+  ================================================
+  */
 
-  const selectedDateSchedules =
-    useMemo(
-      () =>
-        fixedSchedules
-          .filter((schedule) =>
-            scheduleAppliesToDate(
-              schedule,
-              selectedDate
-            )
-          )
-          .sort(
-            (a, b) =>
-              timeToMinutes(
-                a.startTime
-              ) -
-              timeToMinutes(
-                b.startTime
-              )
-          ),
-      [
-        fixedSchedules,
-        selectedDate,
-      ]
-    );
-
-  const totalTaskMinutes =
-    tasks.reduce(
-      (sum, task) =>
-        sum +
-        Number(
-          task.minutes || 0
-        ),
-      0
-    );
-
-  const totalStudiedMinutes =
-    tasks.reduce(
-      (sum, task) =>
-        sum +
-        Number(
-          task.studiedMinutes ||
-            0
-        ),
-      0
-    );
-
-  const completedTasks =
-    tasks.filter(
-      (task) =>
-        task.completed
-    ).length;
-
-  const studyDays =
-    new Set(
+  const selectedTasks = useMemo(
+    () =>
       tasks
         .filter(
           (task) =>
-            Number(
-              task.studiedMinutes ||
-                0
-            ) > 0
+            task.task_date === selectedDate
         )
-        .map(
-          (task) =>
-            task.taskDate
-        )
-    );
+        .sort((a, b) => {
+          if (a.completed !== b.completed) {
+            return a.completed ? 1 : -1;
+          }
 
-  const completionRate =
-    totalTaskMinutes > 0
-      ? Math.min(
-          100,
-          Math.round(
-            (totalStudiedMinutes /
-              totalTaskMinutes) *
-              100
+          if (b.priority !== a.priority) {
+            return b.priority - a.priority;
+          }
+
+          return a.created_at.localeCompare(
+            b.created_at
+          );
+        }),
+    [tasks, selectedDate]
+  );
+
+  const selectedFixedSchedules = useMemo(
+    () =>
+      fixedSchedules
+        .filter((schedule) =>
+          scheduleAppliesToDate(
+            schedule,
+            selectedDate
           )
         )
-      : 0;
+        .sort(
+          (a, b) =>
+            timeToMinutes(a.start_time) -
+            timeToMinutes(b.start_time)
+        ),
+    [fixedSchedules, selectedDate]
+  );
 
-  /* ========================================
-     Calendar
-  ======================================== */
+  /*
+  ================================================
+  Progress
+  ================================================
+  */
 
-  const calendarDays =
-    useMemo(() => {
-      const first =
-        getMonthStart(
-          calendarMonth
-        );
+  const totalStudied = useMemo(
+    () =>
+      tasks.reduce(
+        (sum, task) =>
+          sum +
+          Number(task.studied_minutes || 0),
+        0
+      ),
+    [tasks]
+  );
 
-      const [year, month] =
-        first
-          .split("-")
-          .map(Number);
+  const completedCount = useMemo(
+    () =>
+      tasks.filter((task) => task.completed)
+        .length,
+    [tasks]
+  );
 
-      const firstDay =
-        new Date(
-          year,
-          month - 1,
-          1
-        ).getDay();
+  const studyDays = useMemo(() => {
+    const dates = new Set();
 
-      const days =
-        getDaysInMonth(first);
-
-      const result = [];
-
-      for (
-        let i = 0;
-        i < firstDay;
-        i++
-      ) {
-        result.push(null);
+    for (const log of studyLogs) {
+      if (Number(log.minutes || 0) > 0) {
+        dates.add(log.study_date);
       }
+    }
 
-      for (
-        let i = 1;
-        i <= days;
-        i++
+    for (const task of tasks) {
+      if (
+        Number(task.studied_minutes || 0) >
+        0
       ) {
-        result.push(
-          `${year}-${String(
-            month
-          ).padStart(
-            2,
-            "0"
-          )}-${String(i).padStart(
-            2,
-            "0"
-          )}`
-        );
+        dates.add(task.task_date);
       }
+    }
 
-      return result;
-    }, [calendarMonth]);
+    return dates.size;
+  }, [studyLogs, tasks]);
 
-  /* ========================================
-     Logout
-  ======================================== */
+  const subjectStats = useMemo(
+    () => getSubjectStats(tasks),
+    [tasks]
+  );
 
-  async function logout() {
+  const todayStudyMinutes = useMemo(() => {
+    const log = studyLogs.find(
+      (item) =>
+        item.study_date === todayString()
+    );
+
+    if (log) {
+      return Number(log.minutes || 0);
+    }
+
+    return tasks
+      .filter(
+        (task) =>
+          task.task_date === todayString()
+      )
+      .reduce(
+        (sum, task) =>
+          sum +
+          Number(task.studied_minutes || 0),
+        0
+      );
+  }, [studyLogs, tasks]);
+
+  const weekStudyMinutes = useMemo(() => {
+    const start = getWeekStart(
+      todayString()
+    );
+
+    let total = 0;
+
+    for (let i = 0; i < 7; i++) {
+      const date = addDays(start, i);
+
+      const log = studyLogs.find(
+        (item) => item.study_date === date
+      );
+
+      if (log) {
+        total += Number(log.minutes || 0);
+      }
+    }
+
+    return total;
+  }, [studyLogs]);
+
+  const monthStudyMinutes = useMemo(() => {
+    const prefix =
+      todayString().slice(0, 7);
+
+    return studyLogs
+      .filter((log) =>
+        log.study_date.startsWith(prefix)
+      )
+      .reduce(
+        (sum, log) =>
+          sum + Number(log.minutes || 0),
+        0
+      );
+  }, [studyLogs]);
+
+  /*
+  ================================================
+  Calendar
+  ================================================
+  */
+
+  const calendarDates = useMemo(
+    () => getMonthDates(calendarMonth),
+    [calendarMonth]
+  );
+
+  const calendarInfo = (date) => {
+    if (!date) return null;
+
+    const dateTasks = tasks.filter(
+      (task) => task.task_date === date
+    );
+
+    const studied = dateTasks.reduce(
+      (sum, task) =>
+        sum +
+        Number(task.studied_minutes || 0),
+      0
+    );
+
+    const log = studyLogs.find(
+      (item) => item.study_date === date
+    );
+
+    return {
+      taskCount: dateTasks.length,
+      completed: dateTasks.filter(
+        (task) => task.completed
+      ).length,
+      studied: Math.max(
+        studied,
+        Number(log?.minutes || 0)
+      ),
+    };
+  };
+
+  /*
+  ================================================
+  Logout
+  ================================================
+  */
+
+  const logout = async () => {
     await supabase.auth.signOut();
 
+    setSession(null);
     setTasks([]);
-
     setFixedSchedules([]);
+    setStudyLogs([]);
+    setTimerRunning(false);
+    setTimerSeconds(0);
+  };
 
-    setSettings(
-      DEFAULT_SETTINGS
-    );
-
-    setSettingsDraft(
-      DEFAULT_SETTINGS
-    );
-
-    setUser(null);
-  }
-
-  /* ========================================
-     Loading
-  ======================================== */
+  /*
+  ================================================
+  Render
+  ================================================
+  */
 
   if (authLoading) {
     return (
-      <main className="container">
-        <div className="card">
+      <div className="app loading-screen">
+        <div className="loading-card">
+          <div className="brand-mark">S</div>
           <h2>StudyFlow</h2>
-
-          <p>
-            読み込み中...
-          </p>
+          <p>読み込んでいます...</p>
         </div>
-      </main>
+      </div>
     );
   }
 
-  if (!user) {
-    return (
-      <AuthScreen
-        onAuthenticated={(
-          currentUser
-        ) =>
-          setUser(currentUser)
-        }
-      />
-    );
+  if (!session) {
+    return <AuthScreen />;
   }
-
-  /* ========================================
-     Main
-  ======================================== */
 
   return (
-    <div>
-      <header className="header">
-        <div>
-          <h1>StudyFlow</h1>
-
-          <p>
-            あなたの勉強時間を自動で整理
-          </p>
-        </div>
-
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 10,
-          }}
-        >
-          <span
-            style={{
-              fontSize: 12,
-              color: "#64748b",
-            }}
+    <div className="app">
+      <header className="topbar">
+        <div className="topbar-inner">
+          <div
+            className="brand"
+            onClick={() => setActiveTab("today")}
           >
-            {user.email}
-          </span>
+            <div className="brand-mark">S</div>
 
-          <button
-            className="secondary-button"
-            onClick={logout}
-          >
-            ログアウト
-          </button>
+            <div>
+              <div className="brand-name">
+                StudyFlow
+              </div>
+
+              <div className="brand-subtitle">
+                Smart Study Planner
+              </div>
+            </div>
+          </div>
+
+          <div className="topbar-user">
+            <span>
+              {profile.nickname ||
+                session.user.email}
+            </span>
+
+            <button
+              className="ghost-button"
+              onClick={logout}
+            >
+              ログアウト
+            </button>
+          </div>
         </div>
       </header>
 
-      <nav className="tabs">
-        <button
-          className={
-            activeTab === "today"
-              ? "active"
-              : ""
-          }
-          onClick={() =>
-            setActiveTab("today")
-          }
-        >
-          今日
-        </button>
-
-        <button
-          className={
-            activeTab === "plan"
-              ? "active"
-              : ""
-          }
-          onClick={() =>
-            setActiveTab("plan")
-          }
-        >
-          自動計画
-        </button>
-
-        <button
-          className={
-            activeTab ===
-            "calendar"
-              ? "active"
-              : ""
-          }
-          onClick={() =>
-            setActiveTab(
-              "calendar"
-            )
-          }
-        >
-          カレンダー
-        </button>
-
-        <button
-          className={
-            activeTab ===
-            "progress"
-              ? "active"
-              : ""
-          }
-          onClick={() =>
-            setActiveTab(
-              "progress"
-            )
-          }
-        >
-          進捗
-        </button>
-
-        <button
-          className={
-            activeTab ===
-            "settings"
-              ? "active"
-              : ""
-          }
-          onClick={() =>
-            setActiveTab(
-              "settings"
-            )
-          }
-        >
-          設定
-        </button>
-      </nav>
-
-      <main className="container">
-        {loadingData && (
-          <div className="notice">
-            Supabaseからデータを読み込んでいます...
-          </div>
-        )}
-
-        {syncMessage && (
-          <div className="notice">
-            {syncMessage}
-          </div>
-        )}
-
-        {/* 日付 */}
-        <section className="card">
-          <strong>
-            対象日
-          </strong>
-
-          <div
-            style={{
-              display: "flex",
-              gap: 8,
-              alignItems:
-                "center",
-              marginTop: 10,
-              flexWrap: "wrap",
-            }}
+      <div className="layout">
+        <aside className="sidebar">
+          <button
+            className={
+              activeTab === "today"
+                ? "nav-button active"
+                : "nav-button"
+            }
+            onClick={() =>
+              setActiveTab("today")
+            }
           >
-            <button
-              onClick={() =>
-                setSelectedDate(
-                  addDays(
-                    selectedDate,
-                    -1
-                  )
-                )
-              }
-            >
-              ←
-            </button>
+            <span>⌂</span>
+            今日
+          </button>
 
-            <input
-              type="date"
-              value={
-                selectedDate
-              }
-              onChange={(e) =>
-                setSelectedDate(
-                  e.target.value
-                )
-              }
-            />
+          <button
+            className={
+              activeTab === "plan"
+                ? "nav-button active"
+                : "nav-button"
+            }
+            onClick={() =>
+              setActiveTab("plan")
+            }
+          >
+            <span>✦</span>
+            自動計画
+          </button>
 
-            <button
-              onClick={() =>
-                setSelectedDate(
-                  addDays(
-                    selectedDate,
-                    1
-                  )
-                )
-              }
-            >
-              →
-            </button>
+          <button
+            className={
+              activeTab === "calendar"
+                ? "nav-button active"
+                : "nav-button"
+            }
+            onClick={() =>
+              setActiveTab("calendar")
+            }
+          >
+            <span>□</span>
+            カレンダー
+          </button>
 
-            <button
-              className="secondary-button"
-              onClick={() =>
-                setSelectedDate(
-                  todayString()
-                )
-              }
-            >
-              今日
-            </button>
+          <button
+            className={
+              activeTab === "progress"
+                ? "nav-button active"
+                : "nav-button"
+            }
+            onClick={() =>
+              setActiveTab("progress")
+            }
+          >
+            <span>↗</span>
+            進捗
+          </button>
 
-            <strong
-              style={{
-                marginLeft: 8,
-              }}
-            >
-              {formatDateJP(
-                selectedDate
-              )}
-            </strong>
-          </div>
-        </section>
+          <button
+            className={
+              activeTab === "settings"
+                ? "nav-button active"
+                : "nav-button"
+            }
+            onClick={() =>
+              setActiveTab("settings")
+            }
+          >
+            <span>⚙</span>
+            設定
+          </button>
+        </aside>
 
-        {/* =================================
-            TODAY
-        ================================= */}
+        <main className="main-content">
+          {loadingData && (
+            <div className="loading-bar">
+              データを同期しています...
+            </div>
+          )}
 
-        {activeTab ===
-          "today" && (
-          <>
-            {/* 時間分析 */}
-            <section className="grid">
-              <div className="card">
-                <h2>
-                  今日の時間分析
-                </h2>
+          {message && (
+            <div className="global-message">
+              {message}
 
-                <p
-                  style={{
-                    color:
-                      "#64748b",
-                  }}
-                >
-                  固定予定・移動・設定時間を考慮して、自動計算しています。
-                </p>
+              <button
+                onClick={() => setMessage("")}
+              >
+                ×
+              </button>
+            </div>
+          )}
 
-                <div className="grid">
-                  <div className="stat-card">
-                    <div className="label">
-                      学習可能時間
-                    </div>
+          {/*
+          ========================================
+          TODAY
+          ========================================
+          */}
 
-                    <div className="value">
-                      {
-                        timeAnalysis.totalAvailable
-                      }
-                      <span
-                        style={{
-                          fontSize: 14,
-                          marginLeft: 4,
-                        }}
-                      >
-                        分
-                      </span>
-                    </div>
-                  </div>
+          {activeTab === "today" && (
+            <>
+              <div className="page-header">
+                <div>
+                  <p className="eyebrow">
+                    STUDYFLOW
+                  </p>
 
-                  <div className="stat-card">
-                    <div className="label">
-                      固定予定等
-                    </div>
+                  <h1>
+                    {selectedDate ===
+                    todayString()
+                      ? "今日の学習"
+                      : formatDateJP(
+                          selectedDate
+                        )}
+                  </h1>
 
-                    <div className="value">
-                      {
-                        timeAnalysis.blockedDuringStudy
-                      }
-                      <span
-                        style={{
-                          fontSize: 14,
-                          marginLeft: 4,
-                        }}
-                      >
-                        分
-                      </span>
-                    </div>
-                  </div>
+                  <p className="page-description">
+                    今日やることを整理して、
+                    効率よく進めよう。
+                  </p>
                 </div>
 
-                <h3
-                  style={{
-                    marginTop: 24,
-                  }}
-                >
-                  勉強できる時間帯
-                </h3>
+                <div className="date-control">
+                  <button
+                    onClick={() =>
+                      setSelectedDate(
+                        addDays(
+                          selectedDate,
+                          -1
+                        )
+                      )
+                    }
+                  >
+                    ←
+                  </button>
 
-                {timeAnalysis
-                  .freeSlots
-                  .length ===
-                0 ? (
-                  <p>
-                    現在、学習可能な時間帯がありません。
-                  </p>
-                ) : (
-                  <div className="task-list">
-                    {timeAnalysis.freeSlots.map(
-                      (
-                        slot,
-                        index
-                      ) => (
-                        <div
-                          className="task-item"
-                          key={index}
-                        >
-                          <div>
-                            <h3>
-                              {minutesToTime(
-                                slot.start
-                              )}
-                              〜
-                              {minutesToTime(
-                                slot.end
-                              )}
-                            </h3>
+                  <input
+                    type="date"
+                    value={selectedDate}
+                    onChange={(e) =>
+                      setSelectedDate(
+                        e.target.value
+                      )
+                    }
+                  />
 
-                            <p>
-                              {slot.minutes}
-                              分
-                            </p>
-                          </div>
+                  <button
+                    onClick={() =>
+                      setSelectedDate(
+                        addDays(
+                          selectedDate,
+                          1
+                        )
+                      )
+                    }
+                  >
+                    →
+                  </button>
+                </div>
+              </div>
 
-                          <strong>
-                            空き時間
-                          </strong>
-                        </div>
+              <section className="stats-grid">
+                <div className="stat-card">
+                  <span>勉強可能時間</span>
+                  <strong>
+                    {formatMinutes(
+                      getAvailableMinutes(
+                        selectedDate,
+                        settings,
+                        fixedSchedules
                       )
                     )}
-                  </div>
-                )}
-              </div>
-
-              {/* 自動計画概要 */}
-              <div className="card">
-                <h2>
-                  今日の学習量
-                </h2>
-
-                <div className="grid">
-                  <div className="stat-card">
-                    <div className="label">
-                      必要
-                    </div>
-
-                    <div className="value">
-                      {
-                        planData.totalRequired
-                      }
-                      <span
-                        style={{
-                          fontSize: 14,
-                          marginLeft: 4,
-                        }}
-                      >
-                        分
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="stat-card">
-                    <div className="label">
-                      配置可能
-                    </div>
-
-                    <div className="value">
-                      {
-                        planData.totalPlanned
-                      }
-                      <span
-                        style={{
-                          fontSize: 14,
-                          marginLeft: 4,
-                        }}
-                      >
-                        分
-                      </span>
-                    </div>
-                  </div>
+                  </strong>
+                  <small>
+                    固定予定を除外
+                  </small>
                 </div>
 
-                {planData.shortage >
-                0 ? (
-                  <div className="error">
-                    あと{" "}
+                <div className="stat-card">
+                  <span>今日の学習</span>
+                  <strong>
+                    {formatMinutes(
+                      todayStudyMinutes
+                    )}
+                  </strong>
+                  <small>
+                    実績
+                  </small>
+                </div>
+
+                <div className="stat-card">
+                  <span>未完了タスク</span>
+                  <strong>
                     {
-                      planData.shortage
+                      selectedTasks.filter(
+                        (task) =>
+                          !task.completed
+                      ).length
                     }
-                    分の学習時間が不足しています。
+                  </strong>
+                  <small>
+                    件
+                  </small>
+                </div>
+
+                <div className="stat-card highlight">
+                  <span>自動計画</span>
+                  <strong>
+                    {formatMinutes(
+                      planData.plannedMinutes
+                    )}
+                  </strong>
+                  <small>
+                    配置済み
+                  </small>
+                </div>
+              </section>
+
+              <div className="content-grid">
+                <section className="card">
+                  <div className="section-header">
+                    <div>
+                      <h2>タスク</h2>
+                      <p>
+                        学習する内容を登録
+                      </p>
+                    </div>
                   </div>
-                ) : (
-                  <div className="success">
-                    今日のタスクをすべて配置できます。
-                  </div>
-                )}
 
-                <button
-                  className="primary"
-                  style={{
-                    marginTop: 16,
-                    width: "100%",
-                  }}
-                  onClick={() =>
-                    setActiveTab(
-                      "plan"
-                    )
-                  }
-                >
-                  自動計画を見る
-                </button>
-              </div>
-            </section>
-
-            {/* 固定予定 */}
-            <section className="card">
-              <h2>
-                固定予定
-              </h2>
-
-              {selectedDateSchedules.length ===
-              0 ? (
-                <p>
-                  固定予定はありません。
-                </p>
-              ) : (
-                <div className="task-list">
-                  {selectedDateSchedules.map(
-                    (schedule) => (
-                      <div
-                        className="task-item"
-                        key={
-                          schedule.id
-                        }
-                      >
-                        <div>
-                          <h3>
-                            {
-                              schedule.startTime
-                            }
-                            〜
-                            {
-                              schedule.endTime
-                            }
-                          </h3>
-
-                          <p>
-                            {
-                              schedule.title
-                            }{" "}
-                            ・{" "}
-                            {
-                              FIXED_CATEGORIES[
-                                schedule.category
-                              ] ||
-                              "その他"
-                            }
-                          </p>
-                        </div>
-
-                        <button
-                          className="danger"
-                          onClick={() =>
-                            deleteSchedule(
-                              schedule.id
+                  <form
+                    className="task-form"
+                    onSubmit={saveTask}
+                  >
+                    <div className="form-row">
+                      <label>
+                        科目
+                        <select
+                          value={
+                            taskForm.subject
+                          }
+                          onChange={(e) =>
+                            setTaskForm(
+                              (current) => ({
+                                ...current,
+                                subject:
+                                  e.target.value,
+                              })
                             )
                           }
                         >
-                          削除
+                          {SUBJECTS.map(
+                            (subject) => (
+                              <option
+                                key={subject}
+                                value={subject}
+                              >
+                                {subject}
+                              </option>
+                            )
+                          )}
+                        </select>
+                      </label>
+
+                      <label className="wide">
+                        タスク
+                        <input
+                          value={
+                            taskForm.title
+                          }
+                          onChange={(e) =>
+                            setTaskForm(
+                              (current) => ({
+                                ...current,
+                                title:
+                                  e.target.value,
+                              })
+                            )
+                          }
+                          placeholder="例：数III 積分 例題20〜30"
+                        />
+                      </label>
+                    </div>
+
+                    <div className="form-row">
+                      <label>
+                        必要時間
+                        <input
+                          type="number"
+                          min="1"
+                          value={
+                            taskForm.minutes
+                          }
+                          onChange={(e) =>
+                            setTaskForm(
+                              (current) => ({
+                                ...current,
+                                minutes:
+                                  e.target.value,
+                              })
+                            )
+                          }
+                        />
+                      </label>
+
+                      <label>
+                        優先度
+                        <select
+                          value={
+                            taskForm.priority
+                          }
+                          onChange={(e) =>
+                            setTaskForm(
+                              (current) => ({
+                                ...current,
+                                priority:
+                                  Number(
+                                    e.target.value
+                                  ),
+                              })
+                            )
+                          }
+                        >
+                          <option value="5">
+                            ★★★★★
+                          </option>
+                          <option value="4">
+                            ★★★★
+                          </option>
+                          <option value="3">
+                            ★★★
+                          </option>
+                          <option value="2">
+                            ★★
+                          </option>
+                          <option value="1">
+                            ★
+                          </option>
+                        </select>
+                      </label>
+
+                      <label>
+                        日付
+                        <input
+                          type="date"
+                          value={
+                            taskForm.task_date
+                          }
+                          onChange={(e) =>
+                            setTaskForm(
+                              (current) => ({
+                                ...current,
+                                task_date:
+                                  e.target.value,
+                              })
+                            )
+                          }
+                        />
+                      </label>
+                    </div>
+
+                    <div className="form-actions">
+                      <button
+                        className="primary-button"
+                        type="submit"
+                      >
+                        {editingTaskId
+                          ? "タスクを更新"
+                          : "タスクを追加"}
+                      </button>
+
+                      {editingTaskId && (
+                        <button
+                          type="button"
+                          className="secondary-button"
+                          onClick={
+                            resetTaskForm
+                          }
+                        >
+                          キャンセル
+                        </button>
+                      )}
+                    </div>
+                  </form>
+
+                  <div className="task-list">
+                    {selectedTasks.length ===
+                      0 && (
+                      <div className="empty-state">
+                        <div className="empty-icon">
+                          ✓
+                        </div>
+                        <strong>
+                          タスクはありません
+                        </strong>
+                        <p>
+                          上から今日の勉強内容を追加できます。
+                        </p>
+                      </div>
+                    )}
+
+                    {selectedTasks.map(
+                      (task) => {
+                        const remaining =
+                          getTaskRemaining(
+                            task
+                          );
+
+                        const progress =
+                          Math.min(
+                            100,
+                            Math.round(
+                              (Number(
+                                task.studied_minutes ||
+                                  0
+                              ) /
+                                Math.max(
+                                  1,
+                                  Number(
+                                    task.minutes ||
+                                      1
+                                  )
+                                )) *
+                                100
+                            )
+                          );
+
+                        return (
+                          <div
+                            className={
+                              task.completed
+                                ? "task-item completed"
+                                : "task-item"
+                            }
+                            key={task.id}
+                          >
+                            <button
+                              className="check-button"
+                              onClick={() =>
+                                toggleTask(
+                                  task
+                                )
+                              }
+                            >
+                              {task.completed
+                                ? "✓"
+                                : ""}
+                            </button>
+
+                            <div className="task-main">
+                              <div className="task-title-row">
+                                <span className="subject-tag">
+                                  {
+                                    task.subject
+                                  }
+                                </span>
+
+                                <strong>
+                                  {task.title}
+                                </strong>
+                              </div>
+
+                              <div className="task-meta">
+                                優先度{" "}
+                                {"★".repeat(
+                                  task.priority
+                                )}{" "}
+                                ·{" "}
+                                {formatMinutes(
+                                  task.minutes
+                                )}{" "}
+                                · 残り{" "}
+                                {formatMinutes(
+                                  remaining
+                                )}
+                              </div>
+
+                              <div className="progress-line">
+                                <div
+                                  style={{
+                                    width: `${progress}%`,
+                                  }}
+                                />
+                              </div>
+                            </div>
+
+                            <div className="task-actions">
+                              <button
+                                onClick={() =>
+                                  setTimerTaskId(
+                                    task.id
+                                  )
+                                }
+                              >
+                                ▶
+                              </button>
+
+                              <button
+                                onClick={() =>
+                                  editTask(task)
+                                }
+                              >
+                                編集
+                              </button>
+
+                              <button
+                                onClick={() =>
+                                  deleteTask(
+                                    task.id
+                                  )
+                                }
+                              >
+                                削除
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      }
+                    )}
+                  </div>
+                </section>
+
+                <div className="right-column">
+                  <section className="card timer-card">
+                    <div className="section-header">
+                      <div>
+                        <h2>学習タイマー</h2>
+                        <p>
+                          学習時間を自動記録
+                        </p>
+                      </div>
+                    </div>
+
+                    <select
+                      value={timerTaskId}
+                      onChange={(e) =>
+                        setTimerTaskId(
+                          e.target.value
+                        )
+                      }
+                    >
+                      <option value="">
+                        タスクを選択
+                      </option>
+
+                      {selectedTasks
+                        .filter(
+                          (task) =>
+                            !task.completed
+                        )
+                        .map((task) => (
+                          <option
+                            key={task.id}
+                            value={task.id}
+                          >
+                            {task.subject}：
+                            {task.title}
+                          </option>
+                        ))}
+                    </select>
+
+                    <div className="timer-display">
+                      {timerDisplay}
+                    </div>
+
+                    <div className="timer-buttons">
+                      <button
+                        className="primary-button"
+                        disabled={!timerTaskId}
+                        onClick={() =>
+                          setTimerRunning(
+                            (current) =>
+                              !current
+                          )
+                        }
+                      >
+                        {timerRunning
+                          ? "一時停止"
+                          : "スタート"}
+                      </button>
+
+                      <button
+                        className="secondary-button"
+                        onClick={resetTimer}
+                      >
+                        リセット
+                      </button>
+
+                      <button
+                        className="secondary-button"
+                        disabled={
+                          !timerTaskId ||
+                          timerSeconds === 0
+                        }
+                        onClick={
+                          saveTimerSession
+                        }
+                      >
+                        学習終了
+                      </button>
+                    </div>
+                  </section>
+
+                  <section className="card">
+                    <div className="section-header">
+                      <div>
+                        <h2>固定予定</h2>
+                        <p>
+                          自動計画から除外されます
+                        </p>
+                      </div>
+                    </div>
+
+                    <form
+                      className="compact-form"
+                      onSubmit={
+                        addFixedSchedule
+                      }
+                    >
+                      <input
+                        value={
+                          fixedForm.title
+                        }
+                        onChange={(e) =>
+                          setFixedForm(
+                            (current) => ({
+                              ...current,
+                              title:
+                                e.target.value,
+                            })
+                          )
+                        }
+                        placeholder="例：塾"
+                      />
+
+                      <div className="form-row">
+                        <input
+                          type="time"
+                          value={
+                            fixedForm.start_time
+                          }
+                          onChange={(e) =>
+                            setFixedForm(
+                              (current) => ({
+                                ...current,
+                                start_time:
+                                  e.target
+                                    .value,
+                              })
+                            )
+                          }
+                        />
+
+                        <input
+                          type="time"
+                          value={
+                            fixedForm.end_time
+                          }
+                          onChange={(e) =>
+                            setFixedForm(
+                              (current) => ({
+                                ...current,
+                                end_time:
+                                  e.target
+                                    .value,
+                              })
+                            )
+                          }
+                        />
+                      </div>
+
+                      <div className="form-row">
+                        <select
+                          value={
+                            fixedForm.category
+                          }
+                          onChange={(e) =>
+                            setFixedForm(
+                              (current) => ({
+                                ...current,
+                                category:
+                                  e.target
+                                    .value,
+                              })
+                            )
+                          }
+                        >
+                          {FIXED_CATEGORIES.map(
+                            (category) => (
+                              <option
+                                key={
+                                  category.value
+                                }
+                                value={
+                                  category.value
+                                }
+                              >
+                                {category.label}
+                              </option>
+                            )
+                          )}
+                        </select>
+
+                        <select
+                          value={
+                            fixedForm.repeat_type
+                          }
+                          onChange={(e) =>
+                            setFixedForm(
+                              (current) => ({
+                                ...current,
+                                repeat_type:
+                                  e.target
+                                    .value,
+                              })
+                            )
+                          }
+                        >
+                          <option value="today">
+                            この日のみ
+                          </option>
+
+                          <option value="daily">
+                            毎日
+                          </option>
+                        </select>
+                      </div>
+
+                      <button
+                        className="primary-button"
+                        type="submit"
+                      >
+                        予定を追加
+                      </button>
+                    </form>
+
+                    <div className="fixed-list">
+                      {selectedFixedSchedules.length ===
+                        0 && (
+                        <p className="muted">
+                          固定予定はありません。
+                        </p>
+                      )}
+
+                      {selectedFixedSchedules.map(
+                        (schedule) => (
+                          <div
+                            className="fixed-item"
+                            key={schedule.id}
+                          >
+                            <div>
+                              <strong>
+                                {
+                                  schedule.title
+                                }
+                              </strong>
+
+                              <span>
+                                {
+                                  schedule.start_time
+                                }{" "}
+                                -{" "}
+                                {
+                                  schedule.end_time
+                                }
+                              </span>
+                            </div>
+
+                            <button
+                              onClick={() =>
+                                deleteFixedSchedule(
+                                  schedule.id
+                                )
+                              }
+                            >
+                              ×
+                            </button>
+                          </div>
+                        )
+                      )}
+                    </div>
+                  </section>
+                </div>
+              </div>
+            </>
+          )}
+
+          {/*
+          ========================================
+          PLAN
+          ========================================
+          */}
+
+          {activeTab === "plan" && (
+            <>
+              <div className="page-header">
+                <div>
+                  <p className="eyebrow">
+                    PLANNING ENGINE
+                  </p>
+
+                  <h1>自動学習計画</h1>
+
+                  <p className="page-description">
+                    優先度・残り時間・固定予定・空き時間から自動配置します。
+                  </p>
+                </div>
+
+                <div className="date-control">
+                  <button
+                    onClick={() =>
+                      setSelectedDate(
+                        addDays(
+                          selectedDate,
+                          -1
+                        )
+                      )
+                    }
+                  >
+                    ←
+                  </button>
+
+                  <input
+                    type="date"
+                    value={selectedDate}
+                    onChange={(e) =>
+                      setSelectedDate(
+                        e.target.value
+                      )
+                    }
+                  />
+
+                  <button
+                    onClick={() =>
+                      setSelectedDate(
+                        addDays(
+                          selectedDate,
+                          1
+                        )
+                      )
+                    }
+                  >
+                    →
+                  </button>
+                </div>
+              </div>
+
+              <section className="planning-summary">
+                <div>
+                  <span>勉強可能</span>
+                  <strong>
+                    {formatMinutes(
+                      planData.totalAvailable
+                    )}
+                  </strong>
+                </div>
+
+                <div>
+                  <span>必要</span>
+                  <strong>
+                    {formatMinutes(
+                      planData.totalRequired
+                    )}
+                  </strong>
+                </div>
+
+                <div>
+                  <span>配置済み</span>
+                  <strong>
+                    {formatMinutes(
+                      planData.plannedMinutes
+                    )}
+                  </strong>
+                </div>
+
+                <div
+                  className={
+                    planData.shortage > 0
+                      ? "danger"
+                      : "success"
+                  }
+                >
+                  <span>
+                    {planData.shortage > 0
+                      ? "不足"
+                      : "余裕"}
+                  </span>
+
+                  <strong>
+                    {formatMinutes(
+                      planData.shortage > 0
+                        ? planData.shortage
+                        : planData.remainingAfterPlan
+                    )}
+                  </strong>
+                </div>
+              </section>
+
+              {planData.shortage > 0 && (
+                <div className="warning-card">
+                  <strong>
+                    今日の空き時間だけでは、
+                    すべてのタスクを終えられません。
+                  </strong>
+
+                  <p>
+                    優先度の高いタスクから自動的に配置しています。
+                    残り{" "}
+                    {formatMinutes(
+                      planData.shortage
+                    )}{" "}
+                    あります。
+                  </p>
+                </div>
+              )}
+
+              <section className="card">
+                <div className="section-header">
+                  <div>
+                    <h2>今日の自動計画</h2>
+                    <p>
+                      {formatDateJP(
+                        selectedDate
+                      )}
+                    </p>
+                  </div>
+                </div>
+
+                {planData.plan.length ===
+                  0 && (
+                  <div className="empty-state">
+                    <strong>
+                      配置できるタスクがありません
+                    </strong>
+                    <p>
+                      タスクを追加するか、
+                      固定予定・勉強時間帯を確認してください。
+                    </p>
+                  </div>
+                )}
+
+                <div className="plan-list">
+                  {planData.plan.map(
+                    (item) => (
+                      <div
+                        className="plan-item"
+                        key={item.id}
+                      >
+                        <div className="plan-time">
+                          {minutesToTime(
+                            item.start
+                          )}
+                          <span>↓</span>
+                          {minutesToTime(
+                            item.end
+                          )}
+                        </div>
+
+                        <div className="plan-bar">
+                          <div
+                            className="subject-tag"
+                          >
+                            {
+                              item.subject
+                            }
+                          </div>
+
+                          <strong>
+                            {item.title}
+                          </strong>
+
+                          <span>
+                            {item.minutes}分 · 優先度{" "}
+                            {item.priority}
+                          </span>
+                        </div>
+
+                        <button
+                          className="secondary-button small"
+                          onClick={() => {
+                            setTimerTaskId(
+                              item.taskId
+                            );
+                            setActiveTab(
+                              "today"
+                            );
+                          }}
+                        >
+                          ▶ 開始
                         </button>
                       </div>
                     )
                   )}
                 </div>
-              )}
+              </section>
 
-              <hr
-                style={{
-                  margin:
-                    "24px 0",
-                  border: 0,
-                  borderTop:
-                    "1px solid #e7eaf0",
-                }}
-              />
+              <section className="card">
+                <div className="section-header">
+                  <div>
+                    <h2>空き時間</h2>
+                    <p>
+                      自動計画が利用できる時間帯
+                    </p>
+                  </div>
+                </div>
 
-              <div className="form-grid">
-                <label>
-                  予定名
-
-                  <input
-                    value={
-                      newSchedule.title
-                    }
-                    onChange={(e) =>
-                      setNewSchedule({
-                        ...newSchedule,
-                        title:
-                          e.target
-                            .value,
-                      })
-                    }
-                    placeholder="例：学校"
-                  />
-                </label>
-
-                <label>
-                  種類
-
-                  <select
-                    value={
-                      newSchedule.category
-                    }
-                    onChange={(e) =>
-                      setNewSchedule({
-                        ...newSchedule,
-                        category:
-                          e.target
-                            .value,
-                      })
-                    }
-                  >
-                    {Object.entries(
-                      FIXED_CATEGORIES
-                    ).map(
-                      ([
-                        key,
-                        value,
-                      ]) => (
-                        <option
-                          key={key}
-                          value={key}
-                        >
-                          {value}
-                        </option>
-                      )
-                    )}
-                  </select>
-                </label>
-
-                <label>
-                  開始
-
-                  <input
-                    type="time"
-                    value={
-                      newSchedule.startTime
-                    }
-                    onChange={(e) =>
-                      setNewSchedule({
-                        ...newSchedule,
-                        startTime:
-                          e.target
-                            .value,
-                      })
-                    }
-                  />
-                </label>
-
-                <label>
-                  終了
-
-                  <input
-                    type="time"
-                    value={
-                      newSchedule.endTime
-                    }
-                    onChange={(e) =>
-                      setNewSchedule({
-                        ...newSchedule,
-                        endTime:
-                          e.target
-                            .value,
-                      })
-                    }
-                  />
-                </label>
-
-                <label>
-                  繰り返し
-
-                  <select
-                    value={
-                      newSchedule.repeatType
-                    }
-                    onChange={(e) =>
-                      setNewSchedule({
-                        ...newSchedule,
-                        repeatType:
-                          e.target
-                            .value,
-                      })
-                    }
-                  >
-                    <option value="today">
-                      この日だけ
-                    </option>
-
-                    <option value="daily">
-                      毎日
-                    </option>
-                  </select>
-                </label>
-              </div>
-
-              <button
-                className="primary"
-                onClick={
-                  addSchedule
-                }
-              >
-                予定を追加
-              </button>
-            </section>
-
-            {/* タスク追加 */}
-            <section className="card">
-              <h2>
-                タスク追加
-              </h2>
-
-              <div className="form-grid">
-                <label>
-                  科目
-
-                  <input
-                    value={
-                      newTask.subject
-                    }
-                    onChange={(e) =>
-                      setNewTask({
-                        ...newTask,
-                        subject:
-                          e.target
-                            .value,
-                      })
-                    }
-                  />
-                </label>
-
-                <label>
-                  タスク
-
-                  <input
-                    value={
-                      newTask.title
-                    }
-                    onChange={(e) =>
-                      setNewTask({
-                        ...newTask,
-                        title:
-                          e.target
-                            .value,
-                      })
-                    }
-                    placeholder="例：数III 積分"
-                  />
-                </label>
-
-                <label>
-                  必要時間
-
-                  <input
-                    type="number"
-                    min="1"
-                    value={
-                      newTask.minutes
-                    }
-                    onChange={(e) =>
-                      setNewTask({
-                        ...newTask,
-                        minutes:
-                          Number(
-                            e.target
-                              .value
-                          ),
-                      })
-                    }
-                  />
-                </label>
-
-                <label>
-                  優先度
-
-                  <select
-                    value={
-                      newTask.priority
-                    }
-                    onChange={(e) =>
-                      setNewTask({
-                        ...newTask,
-                        priority:
-                          Number(
-                            e.target
-                              .value
-                          ),
-                      })
-                    }
-                  >
-                    <option value="1">
-                      1
-                    </option>
-
-                    <option value="2">
-                      2
-                    </option>
-
-                    <option value="3">
-                      3
-                    </option>
-
-                    <option value="4">
-                      4
-                    </option>
-
-                    <option value="5">
-                      5
-                    </option>
-                  </select>
-                </label>
-              </div>
-
-              <button
-                className="primary"
-                onClick={
-                  addTask
-                }
-              >
-                タスクを追加
-              </button>
-            </section>
-
-            {/* タスク一覧 */}
-            <section className="card">
-              <h2>
-                {formatDateJP(
-                  selectedDate
-                )} のタスク
-              </h2>
-
-              {selectedDateTasks.length ===
-              0 ? (
-                <p>
-                  タスクはありません。
-                </p>
-              ) : (
-                <div className="task-list">
-                  {selectedDateTasks.map(
-                    (task) => (
+                <div className="slot-list">
+                  {planData.slots.map(
+                    (slot, index) => (
                       <div
-                        className={`task-item ${
-                          task.completed
-                            ? "completed"
-                            : ""
-                        }`}
-                        key={
-                          task.id
-                        }
+                        className="slot-item"
+                        key={`${slot.start}-${index}`}
                       >
-                        <div>
-                          <h3>
-                            {task.subject}
-                            {"："}
-                            {task.title}
-                          </h3>
-
-                          <p>
-                            {task.studiedMinutes ||
-                              0}
-                            {" / "}
-                            {
-                              task.minutes
-                            }
-                            分 ・ 優先度{" "}
-                            {
-                              task.priority
-                            }
-                          </p>
-                        </div>
-
-                        <div
-                          style={{
-                            display:
-                              "flex",
-                            gap: 8,
-                            flexWrap:
-                              "wrap",
-                          }}
-                        >
-                          <button
-                            className="secondary"
-                            onClick={() =>
-                              toggleTask(
-                                task
-                              )
-                            }
-                          >
-                            {task.completed
-                              ? "完了済み"
-                              : "完了"}
-                          </button>
-
-                          <button
-                            className="danger"
-                            onClick={() =>
-                              deleteTask(
-                                task.id
-                              )
-                            }
-                          >
-                            削除
-                          </button>
-                        </div>
-                      </div>
-                    )
-                  )}
-                </div>
-              )}
-            </section>
-
-            {/* タイマー */}
-            <section className="card">
-              <h2>
-                学習タイマー
-              </h2>
-
-              <select
-                value={
-                  timerTaskId
-                }
-                onChange={(e) =>
-                  setTimerTaskId(
-                    e.target
-                      .value
-                  )
-                }
-              >
-                <option value="">
-                  タスクを選択
-                </option>
-
-                {selectedDateTasks.map(
-                  (task) => (
-                    <option
-                      key={
-                        task.id
-                      }
-                      value={
-                        task.id
-                      }
-                    >
-                      {task.subject}
-                      ：
-                      {task.title}
-                    </option>
-                  )
-                )}
-              </select>
-
-              <div className="timer">
-                {String(
-                  Math.floor(
-                    timerSeconds /
-                      60
-                  )
-                ).padStart(
-                  2,
-                  "0"
-                )}
-                :
-                {String(
-                  timerSeconds %
-                    60
-                ).padStart(
-                  2,
-                  "0"
-                )}
-              </div>
-
-              <div
-                style={{
-                  display:
-                    "flex",
-                  justifyContent:
-                    "center",
-                  gap: 10,
-                  flexWrap:
-                    "wrap",
-                }}
-              >
-                <button
-                  className="primary"
-                  disabled={
-                    !timerTaskId
-                  }
-                  onClick={() =>
-                    setTimerRunning(
-                      (prev) =>
-                        !prev
-                    )
-                  }
-                >
-                  {timerRunning
-                    ? "一時停止"
-                    : "開始"}
-                </button>
-
-                <button
-                  className="secondary"
-                  disabled={
-                    !timerTaskId
-                  }
-                  onClick={
-                    finishTimer
-                  }
-                >
-                  学習終了
-                </button>
-
-                <button
-                  className="secondary"
-                  onClick={
-                    resetTimer
-                  }
-                >
-                  リセット
-                </button>
-              </div>
-            </section>
-          </>
-        )}
-
-        {/* =================================
-            PLAN
-        ================================= */}
-
-        {activeTab ===
-          "plan" && (
-          <>
-            <section className="grid">
-              <div className="stat-card">
-                <div className="label">
-                  勉強可能時間
-                </div>
-
-                <div className="value">
-                  {
-                    planData.totalAvailable
-                  }
-                  分
-                </div>
-              </div>
-
-              <div className="stat-card">
-                <div className="label">
-                  必要時間
-                </div>
-
-                <div className="value">
-                  {
-                    planData.totalRequired
-                  }
-                  分
-                </div>
-              </div>
-
-              <div className="stat-card">
-                <div className="label">
-                  自動配置
-                </div>
-
-                <div className="value">
-                  {
-                    planData.totalPlanned
-                  }
-                  分
-                </div>
-              </div>
-            </section>
-
-            <section className="card">
-              <h2>
-                {formatDateJP(
-                  selectedDate
-                )} の自動学習計画
-              </h2>
-
-              <p>
-                固定予定と実際の空き時間を考慮し、優先度の高いタスクから配置しています。
-              </p>
-
-              {planData.plan.length ===
-              0 ? (
-                <p>
-                  自動配置できるタスクがありません。
-                </p>
-              ) : (
-                <div className="task-list">
-                  {planData.plan.map(
-                    (item) => (
-                      <div
-                        className="task-item"
-                        key={
-                          item.id
-                        }
-                      >
-                        <div>
-                          <h3>
-                            {
-                              item.start
-                            }
-                            〜
-                            {
-                              item.end
-                            }
-                          </h3>
-
-                          <p>
-                            {
-                              item.subject
-                            }
-                            {"："}
-                            {
-                              item.title
-                            }
-                          </p>
-                        </div>
-
                         <strong>
-                          {
-                            item.minutes
-                          }
-                          分
-                        </strong>
-                      </div>
-                    )
-                  )}
-                </div>
-              )}
-
-              {planData.shortage >
-              0 ? (
-                <div className="error">
-                  <strong>
-                    学習時間不足
-                  </strong>
-
-                  <p>
-                    あと{" "}
-                    {
-                      planData.shortage
-                    }
-                    分必要です。
-                  </p>
-                </div>
-              ) : (
-                <div className="success">
-                  すべてのタスクを今日の空き時間に配置できます。
-                </div>
-              )}
-            </section>
-
-            <section className="card">
-              <h2>
-                時間の内訳
-              </h2>
-
-              <div className="task-list">
-                {planData.freeSlots.map(
-                  (
-                    slot,
-                    index
-                  ) => (
-                    <div
-                      className="task-item"
-                      key={index}
-                    >
-                      <div>
-                        <h3>
                           {minutesToTime(
                             slot.start
-                          )}
-                          〜
+                          )}{" "}
+                          -{" "}
                           {minutesToTime(
                             slot.end
                           )}
-                        </h3>
-
-                        <p>
-                          学習可能
-                        </p>
-                      </div>
-
-                      <strong>
-                        {
-                          slot.minutes
-                        }
-                        分
-                      </strong>
-                    </div>
-                  )
-                )}
-
-                {planData.freeSlots
-                  .length ===
-                  0 && (
-                  <p>
-                    学習可能な時間帯がありません。
-                  </p>
-                )}
-              </div>
-            </section>
-          </>
-        )}
-
-        {/* =================================
-            CALENDAR
-        ================================= */}
-
-        {activeTab ===
-          "calendar" && (
-          <section className="card">
-            <div
-              style={{
-                display:
-                  "flex",
-                justifyContent:
-                  "space-between",
-                alignItems:
-                  "center",
-                marginBottom: 20,
-              }}
-            >
-              <button
-                onClick={() =>
-                  setCalendarMonth(
-                    addDays(
-                      `${calendarMonth.slice(
-                        0,
-                        7
-                      )}-01`,
-                      -1
-                    )
-                  )
-                }
-              >
-                ←
-              </button>
-
-              <h2
-                style={{
-                  margin: 0,
-                }}
-              >
-                {calendarMonth.slice(
-                  0,
-                  7
-                )}
-              </h2>
-
-              <button
-                onClick={() =>
-                  setCalendarMonth(
-                    addDays(
-                      `${calendarMonth.slice(
-                        0,
-                        7
-                      )}-01`,
-                      32
-                    )
-                  )
-                }
-              >
-                →
-              </button>
-            </div>
-
-            <div className="calendar-grid">
-              {[
-                "日",
-                "月",
-                "火",
-                "水",
-                "木",
-                "金",
-                "土",
-              ].map(
-                (day) => (
-                  <div
-                    key={day}
-                    style={{
-                      textAlign:
-                        "center",
-                      fontWeight: 700,
-                      padding:
-                        "8px 0",
-                      color:
-                        "#64748b",
-                    }}
-                  >
-                    {day}
-                  </div>
-                )
-              )}
-
-              {calendarDays.map(
-                (
-                  date,
-                  index
-                ) => {
-                  if (!date) {
-                    return (
-                      <div
-                        key={`empty-${index}`}
-                      />
-                    );
-                  }
-
-                  const dateTasks =
-                    tasks.filter(
-                      (task) =>
-                        task.taskDate ===
-                        date
-                    );
-
-                  const totalMinutes =
-                    dateTasks.reduce(
-                      (
-                        sum,
-                        task
-                      ) =>
-                        sum +
-                        Number(
-                          task.studiedMinutes ||
-                            0
-                        ),
-                      0
-                    );
-
-                  return (
-                    <button
-                      key={date}
-                      className={`calendar-day ${
-                        date ===
-                        selectedDate
-                          ? "today"
-                          : ""
-                      }`}
-                      onClick={() =>
-                        setSelectedDate(
-                          date
-                        )
-                      }
-                    >
-                      <div>
-                        {
-                          Number(
-                            date.slice(
-                              8
-                            )
-                          )
-                        }
-                      </div>
-
-                      {totalMinutes >
-                        0 && (
-                        <div
-                          style={{
-                            marginTop:
-                              8,
-                            fontSize:
-                              11,
-                            color:
-                              "#4f46e5",
-                          }}
-                        >
-                          {totalMinutes}
-                          分
-                        </div>
-                      )}
-
-                      {dateTasks.length >
-                        0 && (
-                        <div
-                          style={{
-                            marginTop:
-                              4,
-                            fontSize:
-                              10,
-                            color:
-                              "#64748b",
-                          }}
-                        >
-                          {
-                            dateTasks.length
-                          }
-                          件
-                        </div>
-                      )}
-                    </button>
-                  );
-                }
-              )}
-            </div>
-          </section>
-        )}
-
-        {/* =================================
-            PROGRESS
-        ================================= */}
-
-        {activeTab ===
-          "progress" && (
-          <>
-            <section className="grid">
-              <div className="stat-card">
-                <div className="label">
-                  総学習時間
-                </div>
-
-                <div className="value">
-                  {
-                    totalStudiedMinutes
-                  }
-                  分
-                </div>
-              </div>
-
-              <div className="stat-card">
-                <div className="label">
-                  学習日数
-                </div>
-
-                <div className="value">
-                  {
-                    studyDays.size
-                  }
-                  日
-                </div>
-              </div>
-
-              <div className="stat-card">
-                <div className="label">
-                  完了タスク
-                </div>
-
-                <div className="value">
-                  {
-                    completedTasks
-                  }
-                </div>
-              </div>
-
-              <div className="stat-card">
-                <div className="label">
-                  全体進捗
-                </div>
-
-                <div className="value">
-                  {
-                    completionRate
-                  }
-                  %
-                </div>
-              </div>
-            </section>
-
-            <section className="card">
-              <h2>
-                科目別学習量
-              </h2>
-
-              {Array.from(
-                new Set(
-                  tasks.map(
-                    (task) =>
-                      task.subject
-                  )
-                )
-              ).map(
-                (subject) => {
-                  const minutes =
-                    tasks
-                      .filter(
-                        (task) =>
-                          task.subject ===
-                          subject
-                      )
-                      .reduce(
-                        (
-                          sum,
-                          task
-                        ) =>
-                          sum +
-                          Number(
-                            task.studiedMinutes ||
-                              0
-                          ),
-                        0
-                      );
-
-                  const ratio =
-                    totalStudiedMinutes >
-                    0
-                      ? Math.round(
-                          (minutes /
-                            totalStudiedMinutes) *
-                            100
-                        )
-                      : 0;
-
-                  return (
-                    <div
-                      key={
-                        subject
-                      }
-                      style={{
-                        marginBottom:
-                          18,
-                      }}
-                    >
-                      <div
-                        style={{
-                          display:
-                            "flex",
-                          justifyContent:
-                            "space-between",
-                          marginBottom:
-                            6,
-                        }}
-                      >
-                        <strong>
-                          {
-                            subject
-                          }
                         </strong>
 
                         <span>
-                          {
-                            minutes
-                          }
-                          分
+                          {formatMinutes(
+                            slot.minutes
+                          )}
                         </span>
                       </div>
+                    )
+                  )}
+                </div>
+              </section>
+            </>
+          )}
 
-                      <div
-                        style={{
-                          height: 8,
-                          background:
-                            "#e5e7eb",
-                          borderRadius:
-                            999,
-                          overflow:
-                            "hidden",
-                        }}
-                      >
-                        <div
-                          style={{
-                            width: `${ratio}%`,
-                            height:
-                              "100%",
-                            background:
-                              "#4f46e5",
-                          }}
-                        />
-                      </div>
-                    </div>
-                  );
-                }
-              )}
-            </section>
-          </>
-        )}
+          {/*
+          ========================================
+          CALENDAR
+          ========================================
+          */}
 
-        {/* =================================
-            SETTINGS
-        ================================= */}
+          {activeTab === "calendar" && (
+            <>
+              <div className="page-header">
+                <div>
+                  <p className="eyebrow">
+                    CALENDAR
+                  </p>
 
-        {activeTab ===
-          "settings" && (
-          <>
-            <section className="card">
-              <h2>
-                学習時間設定
-              </h2>
+                  <h1>学習カレンダー</h1>
 
-              <p>
-                StudyFlowが「実際に勉強できる時間」を計算するための設定です。
-              </p>
-
-              <div className="form-grid">
-                <label>
-                  起床時刻
-
-                  <input
-                    type="time"
-                    value={
-                      settingsDraft.wakeUpTime
-                    }
-                    onChange={(e) =>
-                      setSettingsDraft({
-                        ...settingsDraft,
-                        wakeUpTime:
-                          e.target
-                            .value,
-                      })
-                    }
-                  />
-                </label>
-
-                <label>
-                  朝の支度時間（分）
-
-                  <input
-                    type="number"
-                    min="0"
-                    value={
-                      settingsDraft.morningPrepMinutes
-                    }
-                    onChange={(e) =>
-                      setSettingsDraft({
-                        ...settingsDraft,
-                        morningPrepMinutes:
-                          Number(
-                            e.target
-                              .value
-                          ),
-                      })
-                    }
-                  />
-                </label>
-
-                <label>
-                  学習開始時刻
-
-                  <input
-                    type="time"
-                    value={
-                      settingsDraft.studyStart
-                    }
-                    onChange={(e) =>
-                      setSettingsDraft({
-                        ...settingsDraft,
-                        studyStart:
-                          e.target
-                            .value,
-                      })
-                    }
-                  />
-                </label>
-
-                <label>
-                  学習終了時刻
-
-                  <input
-                    type="time"
-                    value={
-                      settingsDraft.studyEnd
-                    }
-                    onChange={(e) =>
-                      setSettingsDraft({
-                        ...settingsDraft,
-                        studyEnd:
-                          e.target
-                            .value,
-                      })
-                    }
-                  />
-                </label>
-
-                <label>
-                  デフォルトタスク時間（分）
-
-                  <input
-                    type="number"
-                    min="1"
-                    value={
-                      settingsDraft.defaultTaskMinutes
-                    }
-                    onChange={(e) =>
-                      setSettingsDraft({
-                        ...settingsDraft,
-                        defaultTaskMinutes:
-                          Number(
-                            e.target
-                              .value
-                          ),
-                      })
-                    }
-                  />
-                </label>
-
-                <label>
-                  最小学習ブロック（分）
-
-                  <input
-                    type="number"
-                    min="5"
-                    value={
-                      settingsDraft.minimumStudyBlock
-                    }
-                    onChange={(e) =>
-                      setSettingsDraft({
-                        ...settingsDraft,
-                        minimumStudyBlock:
-                          Number(
-                            e.target
-                              .value
-                          ),
-                      })
-                    }
-                  />
-                </label>
-
-                <label
-                  style={{
-                    display:
-                      "flex",
-                    flexDirection:
-                      "row",
-                    alignItems:
-                      "center",
-                    gap: 8,
-                  }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={
-                      settingsDraft.useStudyRoom
-                    }
-                    onChange={(e) =>
-                      setSettingsDraft({
-                        ...settingsDraft,
-                        useStudyRoom:
-                          e.target
-                            .checked,
-                      })
-                    }
-                  />
-
-                  自習室を利用する
-                </label>
-
-                <label>
-                  自習室までの移動時間（分）
-
-                  <input
-                    type="number"
-                    min="0"
-                    value={
-                      settingsDraft.travelMinutes
-                    }
-                    disabled={
-                      !settingsDraft.useStudyRoom
-                    }
-                    onChange={(e) =>
-                      setSettingsDraft({
-                        ...settingsDraft,
-                        travelMinutes:
-                          Number(
-                            e.target
-                              .value
-                          ),
-                      })
-                    }
-                  />
-                </label>
+                  <p className="page-description">
+                    学習予定と実績を月単位で確認できます。
+                  </p>
+                </div>
               </div>
 
-              <button
-                className="primary"
-                onClick={
-                  saveSettings
-                }
-              >
-                設定を保存
-              </button>
-            </section>
-
-            <section className="card">
-              <h2>
-                現在の時間計算
-              </h2>
-
-              <div className="grid">
-                <div className="stat-card">
-                  <div className="label">
-                    学習時間帯
-                  </div>
-
-                  <div
-                    style={{
-                      fontSize:
-                        20,
-                      fontWeight:
-                        700,
-                      marginTop:
-                        8,
-                    }}
+              <section className="card calendar-card">
+                <div className="calendar-header">
+                  <button
+                    onClick={() =>
+                      setCalendarMonth(
+                        changeMonth(
+                          calendarMonth,
+                          -1
+                        )
+                      )
+                    }
                   >
-                    {
-                      settings.studyStart
+                    ←
+                  </button>
+
+                  <h2>
+                    {new Date(
+                      `${calendarMonth.slice(
+                        0,
+                        7
+                      )}-01T00:00:00`
+                    ).toLocaleDateString(
+                      "ja-JP",
+                      {
+                        year: "numeric",
+                        month: "long",
+                      }
+                    )}
+                  </h2>
+
+                  <button
+                    onClick={() =>
+                      setCalendarMonth(
+                        changeMonth(
+                          calendarMonth,
+                          1
+                        )
+                      )
                     }
-                    〜
-                    {
-                      settings.studyEnd
+                  >
+                    →
+                  </button>
+                </div>
+
+                <div className="calendar-week">
+                  {[
+                    "月",
+                    "火",
+                    "水",
+                    "木",
+                    "金",
+                    "土",
+                    "日",
+                  ].map((day) => (
+                    <div key={day}>
+                      {day}
+                    </div>
+                  ))}
+                </div>
+
+                <div className="calendar-grid">
+                  {calendarDates.map(
+                    (date, index) => {
+                      if (!date) {
+                        return (
+                          <div
+                            className="calendar-day empty"
+                            key={`empty-${index}`}
+                          />
+                        );
+                      }
+
+                      const info =
+                        calendarInfo(
+                          date
+                        );
+
+                      const isSelected =
+                        date ===
+                        selectedDate;
+
+                      const isToday =
+                        date ===
+                        todayString();
+
+                      return (
+                        <button
+                          className={`calendar-day ${
+                            isSelected
+                              ? "selected"
+                              : ""
+                          } ${
+                            isToday
+                              ? "today"
+                              : ""
+                          }`}
+                          key={date}
+                          onClick={() => {
+                            setSelectedDate(
+                              date
+                            );
+                            setActiveTab(
+                              "today"
+                            );
+                          }}
+                        >
+                          <strong>
+                            {Number(
+                              date.slice(8)
+                            )}
+                          </strong>
+
+                          {info.taskCount >
+                            0 && (
+                            <span>
+                              {info.completed}/
+                              {
+                                info.taskCount
+                              }{" "}
+                              tasks
+                            </span>
+                          )}
+
+                          {info.studied > 0 && (
+                            <small>
+                              {formatMinutes(
+                                info.studied
+                              )}
+                            </small>
+                          )}
+                        </button>
+                      );
                     }
-                  </div>
+                  )}
+                </div>
+              </section>
+            </>
+          )}
+
+          {/*
+          ========================================
+          PROGRESS
+          ========================================
+          */}
+
+          {activeTab === "progress" && (
+            <>
+              <div className="page-header">
+                <div>
+                  <p className="eyebrow">
+                    PROGRESS
+                  </p>
+
+                  <h1>学習進捗</h1>
+
+                  <p className="page-description">
+                    これまでの学習量を確認できます。
+                  </p>
+                </div>
+              </div>
+
+              <section className="stats-grid">
+                <div className="stat-card">
+                  <span>累計学習</span>
+                  <strong>
+                    {formatMinutes(
+                      totalStudied
+                    )}
+                  </strong>
+                  <small>
+                    タスク実績
+                  </small>
                 </div>
 
                 <div className="stat-card">
-                  <div className="label">
-                    1日の学習可能時間
+                  <span>今日</span>
+                  <strong>
+                    {formatMinutes(
+                      todayStudyMinutes
+                    )}
+                  </strong>
+                  <small>
+                    学習時間
+                  </small>
+                </div>
+
+                <div className="stat-card">
+                  <span>今週</span>
+                  <strong>
+                    {formatMinutes(
+                      weekStudyMinutes
+                    )}
+                  </strong>
+                  <small>
+                    月曜〜日曜
+                  </small>
+                </div>
+
+                <div className="stat-card">
+                  <span>学習日数</span>
+                  <strong>
+                    {studyDays}
+                  </strong>
+                  <small>
+                    日
+                  </small>
+                </div>
+              </section>
+
+              <div className="content-grid">
+                <section className="card">
+                  <div className="section-header">
+                    <div>
+                      <h2>科目別</h2>
+                      <p>
+                        学習時間の内訳
+                      </p>
+                    </div>
                   </div>
 
-                  <div className="value">
-                    {
-                      timeAnalysis.totalAvailable
-                    }
-                    分
+                  <div className="subject-progress">
+                    {subjectStats.length ===
+                      0 && (
+                      <p className="muted">
+                        まだ学習記録がありません。
+                      </p>
+                    )}
+
+                    {subjectStats.map(
+                      (item) => {
+                        const max =
+                          Math.max(
+                            1,
+                            ...subjectStats.map(
+                              (x) =>
+                                x.studied
+                            )
+                          );
+
+                        const width =
+                          (item.studied /
+                            max) *
+                          100;
+
+                        return (
+                          <div
+                            className="subject-progress-item"
+                            key={
+                              item.subject
+                            }
+                          >
+                            <div className="subject-progress-header">
+                              <strong>
+                                {
+                                  item.subject
+                                }
+                              </strong>
+
+                              <span>
+                                {formatMinutes(
+                                  item.studied
+                                )}
+                              </span>
+                            </div>
+
+                            <div className="progress-line large">
+                              <div
+                                style={{
+                                  width: `${width}%`,
+                                }}
+                              />
+                            </div>
+
+                            <small>
+                              完了{" "}
+                              {
+                                item.completed
+                              }{" "}
+                              件
+                            </small>
+                          </div>
+                        );
+                      }
+                    )}
                   </div>
+                </section>
+
+                <section className="card">
+                  <div className="section-header">
+                    <div>
+                      <h2>タスク達成</h2>
+                      <p>
+                        現在の全タスク状況
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="big-progress">
+                    <div className="big-progress-number">
+                      {tasks.length > 0
+                        ? Math.round(
+                            (completedCount /
+                              tasks.length) *
+                              100
+                          )
+                        : 0}
+                      <span>%</span>
+                    </div>
+
+                    <p>
+                      {completedCount} /{" "}
+                      {tasks.length} タスク完了
+                    </p>
+                  </div>
+
+                  <div className="progress-line large">
+                    <div
+                      style={{
+                        width: `${
+                          tasks.length > 0
+                            ? (completedCount /
+                                tasks.length) *
+                              100
+                            : 0
+                        }%`,
+                      }}
+                    />
+                  </div>
+                </section>
+              </div>
+
+              <section className="card">
+                <div className="section-header">
+                  <div>
+                    <h2>学習ログ</h2>
+                    <p>
+                      今月の記録
+                    </p>
+                  </div>
+
+                  <strong>
+                    {formatMinutes(
+                      monthStudyMinutes
+                    )}
+                  </strong>
+                </div>
+
+                <div className="log-list">
+                  {studyLogs
+                    .slice(-14)
+                    .reverse()
+                    .map((log) => (
+                      <div
+                        className="log-item"
+                        key={log.id}
+                      >
+                        <span>
+                          {formatDateJP(
+                            log.study_date
+                          )}
+                        </span>
+
+                        <strong>
+                          {formatMinutes(
+                            log.minutes
+                          )}
+                        </strong>
+                      </div>
+                    ))}
+
+                  {studyLogs.length ===
+                    0 && (
+                    <p className="muted">
+                      学習ログはまだありません。
+                    </p>
+                  )}
+                </div>
+              </section>
+            </>
+          )}
+
+          {/*
+          ========================================
+          SETTINGS
+          ========================================
+          */}
+
+          {activeTab === "settings" && (
+            <>
+              <div className="page-header">
+                <div>
+                  <p className="eyebrow">
+                    SETTINGS
+                  </p>
+
+                  <h1>設定</h1>
+
+                  <p className="page-description">
+                    StudyFlowがあなたの生活に合わせて計画を作れるように設定します。
+                  </p>
                 </div>
               </div>
-            </section>
-          </>
-        )}
-      </main>
+
+              <div className="settings-grid">
+                <section className="card">
+                  <div className="section-header">
+                    <div>
+                      <h2>プロフィール</h2>
+                      <p>
+                        表示名を設定
+                      </p>
+                    </div>
+                  </div>
+
+                  <form
+                    onSubmit={saveNickname}
+                    className="settings-form"
+                  >
+                    <label>
+                      ニックネーム
+                      <input
+                        value={
+                          nicknameForm
+                        }
+                        onChange={(e) =>
+                          setNicknameForm(
+                            e.target.value
+                          )
+                        }
+                      />
+                    </label>
+
+                    <label>
+                      ログインメール
+                      <input
+                        value={
+                          session.user.email ||
+                          ""
+                        }
+                        disabled
+                      />
+                    </label>
+
+                    <button
+                      className="primary-button"
+                      type="submit"
+                    >
+                      プロフィールを保存
+                    </button>
+                  </form>
+                </section>
+
+                <section className="card">
+                  <div className="section-header">
+                    <div>
+                      <h2>学習時間</h2>
+                      <p>
+                        自動計画の基準
+                      </p>
+                    </div>
+                  </div>
+
+                  <form
+                    className="settings-form"
+                    onSubmit={
+                      saveSettings
+                    }
+                  >
+                    <div className="form-row">
+                      <label>
+                        起床時刻
+                        <input
+                          type="time"
+                          value={
+                            settingsForm.wakeUpTime
+                          }
+                          onChange={(e) =>
+                            setSettingsForm(
+                              (current) => ({
+                                ...current,
+                                wakeUpTime:
+                                  e.target
+                                    .value,
+                              })
+                            )
+                          }
+                        />
+                      </label>
+
+                      <label>
+                        朝の支度
+                        <input
+                          type="number"
+                          min="0"
+                          value={
+                            settingsForm.morningPrepMinutes
+                          }
+                          onChange={(e) =>
+                            setSettingsForm(
+                              (current) => ({
+                                ...current,
+                                morningPrepMinutes:
+                                  e.target
+                                    .value,
+                              })
+                            )
+                          }
+                        />
+                      </label>
+                    </div>
+
+                    <div className="form-row">
+                      <label>
+                        勉強開始
+                        <input
+                          type="time"
+                          value={
+                            settingsForm.studyStart
+                          }
+                          onChange={(e) =>
+                            setSettingsForm(
+                              (current) => ({
+                                ...current,
+                                studyStart:
+                                  e.target
+                                    .value,
+                              })
+                            )
+                          }
+                        />
+                      </label>
+
+                      <label>
+                        勉強終了
+                        <input
+                          type="time"
+                          value={
+                            settingsForm.studyEnd
+                          }
+                          onChange={(e) =>
+                            setSettingsForm(
+                              (current) => ({
+                                ...current,
+                                studyEnd:
+                                  e.target
+                                    .value,
+                              })
+                            )
+                          }
+                        />
+                      </label>
+                    </div>
+
+                    <label className="checkbox-row">
+                      <input
+                        type="checkbox"
+                        checked={
+                          settingsForm.useStudyRoom
+                        }
+                        onChange={(e) =>
+                          setSettingsForm(
+                            (current) => ({
+                              ...current,
+                              useStudyRoom:
+                                e.target
+                                  .checked,
+                            })
+                          )
+                        }
+                      />
+
+                      <span>
+                        自習室を利用する
+                      </span>
+                    </label>
+
+                    {settingsForm.useStudyRoom && (
+                      <label>
+                        自習室までの移動時間
+                        <input
+                          type="number"
+                          min="0"
+                          value={
+                            settingsForm.travelMinutes
+                          }
+                          onChange={(e) =>
+                            setSettingsForm(
+                              (current) => ({
+                                ...current,
+                                travelMinutes:
+                                  e.target
+                                    .value,
+                              })
+                            )
+                          }
+                        />
+                      </label>
+                    )}
+
+                    <label>
+                      タスクのデフォルト時間
+                      <input
+                        type="number"
+                        min="1"
+                        value={
+                          settingsForm.defaultTaskMinutes
+                        }
+                        onChange={(e) =>
+                          setSettingsForm(
+                            (current) => ({
+                              ...current,
+                              defaultTaskMinutes:
+                                e.target
+                                  .value,
+                            })
+                          )
+                        }
+                      />
+                    </label>
+
+                    <button
+                      className="primary-button"
+                      type="submit"
+                    >
+                      設定を保存
+                    </button>
+                  </form>
+                </section>
+              </div>
+
+              <section className="card">
+                <div className="section-header">
+                  <div>
+                    <h2>現在の自動計画条件</h2>
+                    <p>
+                      StudyFlowが計算に使用している値
+                    </p>
+                  </div>
+                </div>
+
+                <div className="condition-grid">
+                  <div>
+                    <span>起床</span>
+                    <strong>
+                      {settings.wakeUpTime}
+                    </strong>
+                  </div>
+
+                  <div>
+                    <span>朝の支度</span>
+                    <strong>
+                      {
+                        settings.morningPrepMinutes
+                      }
+                      分
+                    </strong>
+                  </div>
+
+                  <div>
+                    <span>勉強時間</span>
+                    <strong>
+                      {settings.studyStart}〜
+                      {settings.studyEnd}
+                    </strong>
+                  </div>
+
+                  <div>
+                    <span>自習室</span>
+                    <strong>
+                      {settings.useStudyRoom
+                        ? `利用・${settings.travelMinutes}分`
+                        : "利用しない"}
+                    </strong>
+                  </div>
+
+                  <div>
+                    <span>今日の空き時間</span>
+                    <strong>
+                      {formatMinutes(
+                        getAvailableMinutes(
+                          selectedDate,
+                          settings,
+                          fixedSchedules
+                        )
+                      )}
+                    </strong>
+                  </div>
+                </div>
+              </section>
+            </>
+          )}
+        </main>
+      </div>
     </div>
   );
 }
 
-/* ========================================
-   Render
-======================================== */
-
 createRoot(
-  document.getElementById(
-    "root"
-  )
+  document.getElementById("root")
 ).render(
   <React.StrictMode>
     <App />
