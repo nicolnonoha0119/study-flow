@@ -1,5 +1,6 @@
+```jsx
 import React, { useState } from "react";
-import { generateAIPlan } from "./gemini";
+import { generateAutoPlan } from "./autoPlanner";
 
 export default function AIPlanPanel({
   date,
@@ -9,65 +10,71 @@ export default function AIPlanPanel({
   currentPlan,
   onAdopt,
 }) {
-  const [userMessage, setUserMessage] = useState("");
-  const [aiLoading, setAiLoading] = useState(false);
-  const [aiError, setAiError] = useState("");
-  const [aiResult, setAiResult] = useState(null);
+  const [planLoading, setPlanLoading] = useState(false);
+  const [planError, setPlanError] = useState("");
+  const [planResult, setPlanResult] = useState(null);
 
-  const handleGenerate = async () => {
-    setAiError("");
-    setAiLoading(true);
+  const handleGenerate = () => {
+    setPlanError("");
+    setPlanLoading(true);
 
     try {
-      const result = await generateAIPlan({
+      const result = generateAutoPlan({
         date,
         tasks,
         fixedSchedules,
         settings,
         currentPlan,
-        userMessage,
       });
 
-      setAiResult(result);
+      setPlanResult(result);
     } catch (error) {
       console.error(error);
 
-      setAiError(
+      setPlanError(
         error?.message ||
-          "AI計画の生成中にエラーが発生しました。"
+          "自動計画の作成中にエラーが発生しました。"
       );
     } finally {
-      setAiLoading(false);
+      setPlanLoading(false);
     }
   };
 
   const handleAdopt = () => {
-    if (!aiResult || !Array.isArray(aiResult.plan)) {
+    if (
+      !planResult ||
+      !Array.isArray(planResult.plan)
+    ) {
       return;
     }
 
-    if (aiResult.plan.length === 0) {
+    const studyPlan = planResult.plan.filter(
+      (item) =>
+        item.type === "study"
+    );
+
+    if (studyPlan.length === 0) {
       return;
     }
 
     if (onAdopt) {
-      onAdopt(aiResult.plan);
+      onAdopt(studyPlan);
     }
   };
 
   const hasPlan =
-    aiResult &&
-    Array.isArray(aiResult.plan) &&
-    aiResult.plan.length > 0;
+    planResult &&
+    Array.isArray(planResult.plan) &&
+    planResult.plan.length > 0;
 
   const hasRemaining =
-    aiResult &&
-    Array.isArray(aiResult.remainingTasks) &&
-    aiResult.remainingTasks.length > 0;
+    planResult &&
+    Array.isArray(planResult.remainingTasks) &&
+    planResult.remainingTasks.length > 0;
 
   const planCount = hasPlan
-    ? String(aiResult.plan.length) + "件を提案"
-    : "分析完了";
+    ? `${planResult.plan.length}件`
+    : "計画完了";
 
   return (
     <section className="ai-plan-panel">
@@ -75,108 +82,130 @@ export default function AIPlanPanel({
         <div className="ai-hero-icon">✦</div>
 
         <div className="ai-hero-content">
-          <div className="ai-eyebrow">GEMINI AI</div>
+          <div className="ai-eyebrow">
+            STUDYFLOW
+          </div>
 
           <h2>
             学習計画を
-            <span>AIで最適化</span>
+            <span>自動で作成</span>
           </h2>
 
           <p>
             今日のタスク・空き時間・固定予定・優先度を分析して、
-            あなたに合わせた学習計画を提案します。
+            StudyFlowが自動で学習計画を作成します。
           </p>
         </div>
 
         <div className="ai-status">
           <span className="ai-status-dot" />
-          AI READY
+          AUTO PLAN
         </div>
       </div>
 
       <div className="ai-input-card">
         <div className="ai-input-header">
           <div>
-            <strong>AIへの要望</strong>
+            <strong>
+              今日の学習計画を自動作成
+            </strong>
 
             <span>
-              今日の状況や希望を自由に入力できます
+              登録したタスクと予定から最適な順番で配置します
             </span>
           </div>
 
           <span className="ai-input-label">
-            OPTIONAL
+            AUTOMATIC
           </span>
         </div>
 
-        <textarea
-          id="ai-user-message"
-          value={userMessage}
-          onChange={(event) => {
-            setUserMessage(event.target.value);
+        <div
+          style={{
+            padding: "13px 14px",
+            borderRadius: "10px",
+            background: "#ffffff",
+            border: "1px solid #e3e6ee",
+            color: "#737b8d",
+            fontSize: "11px",
+            lineHeight: "1.7",
           }}
-          placeholder={
-            "例：今日は数学を多めにしたい\n" +
-            "例：17時以降は勉強したくない\n" +
-            "例：数学が30分延長した\n" +
-            "例：今日は少し疲れている"
-          }
-          rows={4}
-          disabled={aiLoading}
-        />
+        >
+          <div>
+            ✓ 優先度の高いタスクから配置
+          </div>
+
+          <div>
+            ✓ 固定予定と重ならないように配置
+          </div>
+
+          <div>
+            ✓ 必要時間を考慮して自動分割
+          </div>
+
+          <div>
+            ✓ 長時間連続しないよう休憩を設定
+          </div>
+        </div>
 
         <div className="ai-input-footer">
           <span>
-            ✦ AIは現在の自動計画も参考にします
+            ✦ Geminiなどの外部AIは使用しません
           </span>
 
           <button
             type="button"
             className="ai-generate-button"
             onClick={handleGenerate}
-            disabled={aiLoading}
+            disabled={planLoading}
           >
-            {aiLoading ? (
+            {planLoading ? (
               <>
                 <span className="ai-spinner" />
-                AIが計画を作成中...
+                計画を作成中...
               </>
             ) : (
               <>
                 <span>✦</span>
-                <span>AIで計画を作成</span>
+                <span>自動で計画を作成</span>
               </>
             )}
           </button>
         </div>
       </div>
 
-      {aiError && (
+      {planError && (
         <div className="ai-error">
-          <div className="ai-error-icon">!</div>
+          <div className="ai-error-icon">
+            !
+          </div>
 
           <div>
             <strong>
-              AI計画を作成できませんでした
+              自動計画を作成できませんでした
             </strong>
 
-            <p>{aiError}</p>
+            <p>{planError}</p>
           </div>
         </div>
       )}
 
-      {aiResult && !aiError && (
+      {planResult && !planError && (
         <div className="ai-result">
           <div className="ai-result-header">
             <div className="ai-result-heading">
-              <div className="ai-result-icon">✦</div>
+              <div className="ai-result-icon">
+                ✦
+              </div>
 
               <div>
                 <div className="ai-result-eyebrow">
-                  AI ANALYSIS
+                  AUTOMATIC PLAN
                 </div>
 
-                <h3>AIからの提案</h3>
+                <h3>
+                  今日の学習計画
+                </h3>
               </div>
             </div>
 
@@ -185,22 +214,32 @@ export default function AIPlanPanel({
             </div>
           </div>
 
-          {aiResult.summary && (
+          {planResult.summary && (
             <div className="ai-summary">
-              <div className="ai-summary-mark">“</div>
+              <div className="ai-summary-mark">
+                “
+              </div>
 
-              <p>{aiResult.summary}</p>
+              <p>
+                {planResult.summary}
+              </p>
             </div>
           )}
 
-          {aiResult.advice && (
+          {planResult.advice && (
             <div className="ai-advice">
-              <div className="ai-advice-icon">💡</div>
+              <div className="ai-advice-icon">
+                💡
+              </div>
 
               <div>
-                <strong>AIからのアドバイス</strong>
+                <strong>
+                  計画について
+                </strong>
 
-                <p>{aiResult.advice}</p>
+                <p>
+                  {planResult.advice}
+                </p>
               </div>
             </div>
           )}
@@ -209,67 +248,87 @@ export default function AIPlanPanel({
             <div className="ai-schedule-section">
               <div className="ai-section-title">
                 <div>
-                  <strong>提案された学習計画</strong>
+                  <strong>
+                    作成された学習計画
+                  </strong>
 
                   <span>
-                    AIが優先順位と空き時間を考慮して配置しました
+                    優先度・必要時間・固定予定を考慮して配置しました
                   </span>
                 </div>
 
                 <span className="ai-section-count">
-                  {String(aiResult.plan.length)} TASK
+                  {String(planResult.plan.length)} TASK
                 </span>
               </div>
 
               <div className="ai-schedule">
-                {aiResult.plan.map((item, index) => (
-                  <div
-                    className="ai-schedule-item"
-                    key={
-                      String(item.start || "") +
-                      "-" +
-                      String(item.end || "") +
-                      "-" +
-                      String(index)
-                    }
-                  >
-                    <div className="ai-schedule-number">
-                      {String(index + 1).padStart(2, "0")}
-                    </div>
-
-                    <div className="ai-time">
-                      <strong>
-                        {item.start || "--:--"}
-                      </strong>
-
-                      <span>—</span>
-
-                      <strong>
-                        {item.end || "--:--"}
-                      </strong>
-                    </div>
-
-                    <div className="ai-schedule-line" />
-
-                    <div className="ai-task">
-                      <div className="ai-task-top">
-                        <strong>
-                          {item.taskTitle || "学習"}
-                        </strong>
-
-                        {item.subject && (
-                          <span className="ai-subject">
-                            {item.subject}
-                          </span>
+                {planResult.plan.map(
+                  (item, index) => (
+                    <div
+                      className="ai-schedule-item"
+                      key={
+                        String(item.start || "") +
+                        "-" +
+                        String(item.end || "") +
+                        "-" +
+                        String(index)
+                      }
+                    >
+                      <div className="ai-schedule-number">
+                        {String(index + 1).padStart(
+                          2,
+                          "0"
                         )}
                       </div>
 
-                      {item.reason && (
-                        <small>{item.reason}</small>
-                      )}
+                      <div className="ai-time">
+                        <strong>
+                          {item.start || "--:--"}
+                        </strong>
+
+                        <span>—</span>
+
+                        <strong>
+                          {item.end || "--:--"}
+                        </strong>
+                      </div>
+
+                      <div
+                        className="ai-schedule-line"
+                        style={{
+                          background:
+                            item.type === "fixed"
+                              ? "#b7bcc8"
+                              : item.type === "break"
+                              ? "#d6d9e1"
+                              : undefined,
+                        }}
+                      />
+
+                      <div className="ai-task">
+                        <div className="ai-task-top">
+                          <strong>
+                            {item.taskTitle ||
+                              "学習"}
+                          </strong>
+
+                          {item.subject && (
+                            <span className="ai-subject">
+                              {item.subject}
+                            </span>
+                          )}
+                        </div>
+
+                        {item.reason && (
+                          <small>
+                            {item.reason}
+                          </small>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  )
+                )}
               </div>
             </div>
           )}
@@ -277,7 +336,9 @@ export default function AIPlanPanel({
           {hasRemaining && (
             <div className="ai-remaining">
               <div className="ai-remaining-header">
-                <div className="ai-remaining-icon">!</div>
+                <div className="ai-remaining-icon">
+                  !
+                </div>
 
                 <div>
                   <strong>
@@ -285,34 +346,42 @@ export default function AIPlanPanel({
                   </strong>
 
                   <span>
-                    AIが優先度を考慮して後回しにしたタスクです
+                    今日の時間に入りきらないタスクです
                   </span>
                 </div>
               </div>
 
               <div className="ai-remaining-list">
-                {aiResult.remainingTasks.map(
+                {planResult.remainingTasks.map(
                   (item, index) => (
                     <div
                       className="ai-remaining-item"
                       key={
-                        String(item.title || "task") +
+                        String(
+                          item.title || "task"
+                        ) +
                         "-" +
                         String(index)
                       }
                     >
                       <div>
                         <strong>
-                          {item.title || "未完了タスク"}
+                          {item.title ||
+                            "未完了タスク"}
                         </strong>
 
                         {item.reason && (
-                          <small>{item.reason}</small>
+                          <small>
+                            {item.reason}
+                          </small>
                         )}
                       </div>
 
                       <span>
-                        {String(item.minutes || 0)}分
+                        {String(
+                          item.minutes || 0
+                        )}
+                        分
                       </span>
                     </div>
                   )
@@ -329,7 +398,7 @@ export default function AIPlanPanel({
                 </strong>
 
                 <span>
-                  採用すると、通常の自動計画として反映されます。
+                  採用すると通常の学習計画に反映されます。
                 </span>
               </div>
 
@@ -348,3 +417,4 @@ export default function AIPlanPanel({
     </section>
   );
 }
+```
