@@ -4296,7 +4296,7 @@ const handleAdoptAIPlan = useCallback(
       </div>
     </div>
   );
-}
+
 
 createRoot(
   document.getElementById("root")
