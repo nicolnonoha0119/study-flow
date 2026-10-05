@@ -1974,29 +1974,7 @@ const saveSettings = async (event) => {
     return;
   }
 
-  const nextSettings = normalizeSettings(settingsForm);
-
-  setSettings(nextSettings);
-
-  if (session?.user?.id) {
-    const payload = {
-      user_id: session.user.id,
-      wake_up_time: nextSettings.wakeUpTime,
-      morning_prep_minutes: Number(
-        nextSettings.morningPrepMinutes
-      ),
-      use_study_room: Boolean(
-        nextSettings.useStudyRoom
-      ),
-      travel_minutes: Number(
-        nextSettings.travelMinutes
-      ),
-      study_start: nextSettings.studyStart,
-      study_end: nextSettings.studyEnd,
-      default_task_minutes: Number(
-        nextSettings.defaultTaskMinutes
-      ),
-    };
+  
 
     const { error } = await supabase
       .from("study_settings")
