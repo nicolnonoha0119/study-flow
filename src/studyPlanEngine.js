@@ -205,17 +205,29 @@ function mergeIntervals(intervals) {
   return merged;
 }
 
-function getAvailableIntervals(
-  settings,
-  fixedSchedules
-) {
-  /*
-    StudyFlowの設定に合わせて、
-    startTime / endTime / studyStart / studyEnd
-    のいずれかを使用します。
-  */
+function getWeekdayKey(dateString) {
+  if (!dateString) return "monday";
+  const day = new Date(`${dateString}T00:00:00`).getDay();
+  return [
+    "sunday",
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+  ][day];
+}
+
+function getStudyWindow(settings, dateString) {
+  const weekly = settings?.weeklyStudyHours;
+  const key = getWeekdayKey(dateString);
+  const day = weekly?.[key];
+
+  if (day && day.enabled === false) return null;
 
   const startValue =
+    day?.start ||
     settings?.startTime ||
     settings?.studyStart ||
     settings?.availableStart ||
@@ -223,6 +235,7 @@ function getAvailableIntervals(
     "07:00";
 
   const endValue =
+    day?.end ||
     settings?.endTime ||
     settings?.studyEnd ||
     settings?.availableEnd ||
@@ -232,49 +245,40 @@ function getAvailableIntervals(
   const dayStart = toMinutes(startValue);
   const dayEnd = toMinutes(endValue);
 
-  const actualStart =
-    dayStart === null ? 7 * 60 : dayStart;
+  const actualStart = dayStart === null ? 7 * 60 : dayStart;
+  const actualEnd = dayEnd === null ? 23 * 60 : dayEnd;
 
-  const actualEnd =
-    dayEnd === null ? 23 * 60 : dayEnd;
+  if (actualEnd <= actualStart) return null;
 
-  if (actualEnd <= actualStart) {
-    return [];
-  }
+  return { start: actualStart, end: actualEnd };
+}
+
+function getAvailableIntervals(settings, fixedSchedules, dateString) {
+  const window = getStudyWindow(settings, dateString);
+  if (!window) return [];
 
   const fixed = fixedSchedules.filter(
-    (item) =>
-      item.end > actualStart &&
-      item.start < actualEnd
+    (item) => item.end > window.start && item.start < window.end
   );
 
   const blocked = fixed.map((item) => ({
-    start: Math.max(item.start, actualStart),
-    end: Math.min(item.end, actualEnd),
+    start: Math.max(item.start, window.start),
+    end: Math.min(item.end, window.end),
   }));
 
   const merged = mergeIntervals(blocked);
-
   const intervals = [];
-
-  let cursor = actualStart;
+  let cursor = window.start;
 
   for (const block of merged) {
     if (cursor < block.start) {
-      intervals.push({
-        start: cursor,
-        end: block.start,
-      });
+      intervals.push({ start: cursor, end: block.start });
     }
-
     cursor = Math.max(cursor, block.end);
   }
 
-  if (cursor < actualEnd) {
-    intervals.push({
-      start: cursor,
-      end: actualEnd,
-    });
+  if (cursor < window.end) {
+    intervals.push({ start: cursor, end: window.end });
   }
 
   return intervals;
@@ -390,6 +394,7 @@ export function generateAutoPlan({
   tasks = [],
   fixedSchedules = [],
   settings = {},
+  dateString = new Date().toISOString().slice(0, 10),
 }) {
   const normalizedFixed =
     normalizeFixedSchedules(fixedSchedules);
@@ -397,7 +402,8 @@ export function generateAutoPlan({
   const availableIntervals =
     getAvailableIntervals(
       settings,
-      normalizedFixed
+      normalizedFixed,
+      dateString
     );
 
   const studyBlocks =
