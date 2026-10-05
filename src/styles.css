@@ -2535,3 +2535,159 @@ label select {
   font-size: 10px;
   line-height: 1.5;
 }
+
+
+/* =========================================
+   StudyFlow v4 - Plan page balance fix
+========================================= */
+.plan-page {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.plan-page .page-header {
+  margin-bottom: 0;
+}
+
+.plan-page > .card {
+  padding: 20px 22px;
+}
+
+.plan-page > .card .section-header {
+  margin-bottom: 10px;
+}
+
+.plan-page .form-actions {
+  margin: 0 0 4px !important;
+}
+
+.plan-page .plan-list {
+  margin: 0;
+}
+
+.plan-page .plan-item {
+  min-height: 72px;
+  padding: 9px 0;
+}
+
+.plan-page .plan-time {
+  width: 82px;
+}
+
+.plan-page .plan-bar strong {
+  margin-top: 3px;
+}
+
+.plan-page .slot-list {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.plan-page .slot-item {
+  padding: 11px 13px;
+}
+
+@media (max-width: 760px) {
+  .plan-page {
+    gap: 10px;
+  }
+
+  .plan-page > .card {
+    padding: 16px;
+  }
+
+  .plan-page .slot-list {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* =========================================
+   StudyFlow Design-only patch
+   螟画峩蟇ｾ雎｡�壹％縺ｮCSS繝輔ぃ繧､繝ｫ縺ｮ縺ｿ
+========================================= */
+
+/* 閾ｪ蜍戊ｨ育判繧ｫ繝ｼ繝峨�蜀�ｮｹ縺ｫ蜷医ｏ縺帙※鬮倥＆繧呈ｱｺ繧√ｋ */
+.plan-page > .card {
+  height: auto !important;
+  min-height: 0 !important;
+  flex: 0 0 auto !important;
+  align-self: stretch;
+  overflow: visible;
+}
+
+/* 隕句�縺冷�蜀崎ｨ育ｮ励�繧ｿ繝ｳ竊定ｨ育判縺ｮ髢馴囈繧定ｩｰ繧√ｋ */
+.plan-page > .card .section-header {
+  margin-bottom: 8px !important;
+}
+
+.plan-page .form-actions {
+  margin: 0 0 2px !important;
+  padding: 0 !important;
+  min-height: 0 !important;
+}
+
+.plan-page .plan-list {
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+.plan-page .plan-item {
+  min-height: 0 !important;
+  padding: 10px 0 !important;
+  gap: 14px;
+}
+
+.plan-page .plan-bar {
+  min-width: 0;
+}
+
+.plan-page .plan-bar strong {
+  margin: 3px 0 2px !important;
+  line-height: 1.4;
+}
+
+.plan-page .plan-time {
+  flex: 0 0 82px;
+}
+
+/* 遨ｺ縺肴凾髢薙き繝ｼ繝峨ｂ荳ｭ霄ｫ莉･荳翫↓邵ｦ縺ｸ莨ｸ縺ｰ縺輔↑縺� */
+.plan-page > .card:last-child {
+  height: auto !important;
+  min-height: 0 !important;
+}
+
+.plan-page > .card:last-child .section-header {
+  margin-bottom: 8px !important;
+}
+
+.plan-page .slot-list {
+  margin: 0 !important;
+  padding: 0 !important;
+  align-items: start;
+}
+
+.plan-page .slot-item {
+  min-height: 0 !important;
+  padding: 11px 13px !important;
+}
+
+@media (min-width: 761px) {
+  /* 1莉ｶ縺励°縺ｪ縺�ｩｺ縺肴凾髢薙ｂ縲√き繝ｼ繝芽�菴薙�繧ｳ繝ｳ繝代け繝医↓ */
+  .plan-page .slot-list {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .plan-page .slot-item {
+    align-self: start;
+  }
+}
+
+@media (max-width: 760px) {
+  .plan-page > .card {
+    padding: 16px !important;
+  }
+
+  .plan-page .plan-item {
+    gap: 9px;
+  }
+}
