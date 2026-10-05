@@ -76,6 +76,19 @@ const pickTime = (candidates, fallback) => {
   return fallback;
 };
 
+const getWeekdayKey = (dateString) => {
+  const day = new Date(`${dateString}T00:00:00`).getDay();
+  return [
+    "sunday",
+    "monday",
+    "tuesday",
+    "wednesday",
+    "thursday",
+    "friday",
+    "saturday",
+  ][day];
+};
+
 // ----------------------------------------
 // コンポーネント
 // ----------------------------------------
@@ -121,8 +134,15 @@ export default function AIPlanPanel({
 
   // 自動計画を作成
   const generated = useMemo(() => {
+    const weeklyDay = settings?.weeklyStudyHours?.[getWeekdayKey(date)];
+
+    if (weeklyDay?.enabled === false) {
+      return { plan: [], remainingTasks: [] };
+    }
+
     const studyStart = pickTime(
       [
+        weeklyDay?.start,
         settings?.studyStart,
         settings?.studyStartTime,
         settings?.startTime,
@@ -133,6 +153,7 @@ export default function AIPlanPanel({
 
     const studyEnd = pickTime(
       [
+        weeklyDay?.end,
         settings?.studyEnd,
         settings?.studyEndTime,
         settings?.endTime,
