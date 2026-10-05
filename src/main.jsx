@@ -2056,9 +2056,31 @@ function App() {
     ]
   );
 
-  useEffect(() => {
-    setAiAdoptedPlan(null);
-  }, [selectedDate, tasks, settings, fixedSchedules]);
+useEffect(() => {
+  try {
+    const adoptedKey =
+      `studyflow_ai_plan_${selectedDate}`;
+
+    const saved =
+      localStorage.getItem(adoptedKey);
+
+    if (saved) {
+      const parsed = JSON.parse(saved);
+
+      if (Array.isArray(parsed)) {
+        setAiAdoptedPlan(parsed);
+        return;
+      }
+    }
+  } catch (error) {
+    console.error(
+      "保存済みAI計画の読み込みに失敗しました:",
+      error
+    );
+  }
+
+  setAiAdoptedPlan(null);
+}, [selectedDate]);
 /*
 ================================================
 Gemini AI plan
@@ -2069,8 +2091,9 @@ const currentPlanForAI =
   aiAdoptedPlan || planData.plan;
 
 const handleAdoptAIPlan = useCallback(
-  (aiPlan) => {
-    if (!Array.isArray(aiPlan)) {
+  async (aiPlan) => {
+    if (!Array.isArray(aiPlan) || aiPlan.length === 0) {
+      setMessage("採用できる学習計画がありません。");
       return;
     }
 
@@ -2094,70 +2117,115 @@ const handleAdoptAIPlan = useCallback(
           return null;
         }
 
-        const matchedTask = tasks.find(
-          (task) => {
-            if (item.taskId) {
-              return task.id === item.taskId;
-            }
-
-            if (
-              item.taskTitle &&
-              task.title === item.taskTitle
-            ) {
-              return true;
-            }
-
-            if (
-              item.title &&
-              task.title === item.title
-            ) {
-              return true;
-            }
-
-            return false;
+        /*
+         * 元のタスクを探す
+         */
+        const matchedTask = tasks.find((task) => {
+          if (item.taskId) {
+            return task.id === item.taskId;
           }
-        );
+
+          if (
+            item.taskTitle &&
+            task.title === item.taskTitle
+          ) {
+            return true;
+          }
+
+          if (
+            item.title &&
+            task.title === item.title
+          ) {
+            return true;
+          }
+
+          return false;
+        });
 
         return {
           id: `ai-${Date.now()}-${index}`,
+
           taskId:
             item.taskId ||
             matchedTask?.id ||
             null,
+
           title:
             item.taskTitle ||
             item.title ||
             matchedTask?.title ||
             "学習",
+
           subject:
             item.subject ||
             matchedTask?.subject ||
             "その他",
+
           priority:
             Number(
               item.priority ??
                 matchedTask?.priority ??
                 3
             ),
+
           start,
           end,
+
           minutes:
             Number(item.minutes) ||
             end - start,
-          reason: item.reason || "",
-          type: item.type || "study",
+
+          reason:
+            item.reason || "",
+
+          type:
+            item.type || "study",
+
           aiGenerated: true,
         };
       })
       .filter(Boolean);
 
+    if (normalizedPlan.length === 0) {
+      setMessage(
+        "有効な学習計画が見つかりませんでした。"
+      );
+      return;
+    }
+
+    /*
+     * 採用した計画を画面に反映
+     */
     setAiAdoptedPlan(normalizedPlan);
 
+    /*
+     * 今日の計画タブへ移動
+     */
+    setActiveTab("planning");
+
+    /*
+     * 保存できる状態にする
+     */
+    try {
+      const adoptedKey =
+        `studyflow_ai_plan_${selectedDate}`;
+
+      localStorage.setItem(
+        adoptedKey,
+        JSON.stringify(normalizedPlan)
+      );
+    } catch (error) {
+      console.error(
+        "AI計画の保存に失敗しました:",
+        error
+      );
+    }
+
     setMessage(
-      "Gemini AIの学習計画を採用しました。"
+      "学習計画を採用しました。今日の自動計画に反映されています。"
     );
   },
-  [tasks]
+  [tasks, selectedDate]
 );
 
   /*
