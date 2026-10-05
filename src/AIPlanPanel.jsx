@@ -72,9 +72,9 @@ export default function AIPlanPanel({
     Array.isArray(planResult.remainingTasks) &&
     planResult.remainingTasks.length > 0;
 
-  const planCount = hasPlan
-    ? `${planResult.plan.length}件`
-    : "計画完了";
+ const planCount = hasPlan
+  ? String(planResult.plan.length) + "件"
+  : "計画完了";
 
   return (
     <section className="ai-plan-panel">
