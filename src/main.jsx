@@ -7,12 +7,6 @@ import React, {
 import { createRoot } from "react-dom/client";
 import { supabase } from "./supabase";
 import AIPlanPanel from "./AIPlanPanel";
-import StudyGoalPanel from "./StudyGoalPanel";
-import SchedulePanel from "./SchedulePanel";
-import {
-  normalizeStudyGoal,
-  buildDailyGoalTasks,
-} from "./studyGoalEngine";
 import "./styles.css";
 
 /*
@@ -45,26 +39,6 @@ generatePlan()
 
 const LOCAL_KEY = "studyflow_data_v4";
 
-const DEFAULT_WEEKLY_STUDY_HOURS = {
-  monday: { enabled: true, start: "14:00", end: "19:20" },
-  tuesday: { enabled: true, start: "14:00", end: "19:20" },
-  wednesday: { enabled: true, start: "14:00", end: "19:20" },
-  thursday: { enabled: true, start: "14:00", end: "19:20" },
-  friday: { enabled: true, start: "14:00", end: "19:20" },
-  saturday: { enabled: true, start: "09:00", end: "18:00" },
-  sunday: { enabled: true, start: "09:00", end: "18:00" },
-};
-
-const WEEKDAYS = [
-  { key: "monday", label: "月曜日" },
-  { key: "tuesday", label: "火曜日" },
-  { key: "wednesday", label: "水曜日" },
-  { key: "thursday", label: "木曜日" },
-  { key: "friday", label: "金曜日" },
-  { key: "saturday", label: "土曜日" },
-  { key: "sunday", label: "日曜日" },
-];
-
 const DEFAULT_SETTINGS = {
   wakeUpTime: "07:00",
   morningPrepMinutes: 70,
@@ -73,10 +47,40 @@ const DEFAULT_SETTINGS = {
   studyStart: "14:00",
   studyEnd: "19:20",
   defaultTaskMinutes: 45,
-  weeklyStudyHours: DEFAULT_WEEKLY_STUDY_HOURS,
 };
 
-
+const DEFAULT_TASKS = [
+  {
+    subject: "数学",
+    title: "基礎問題精講 数III 積分",
+    minutes: 60,
+    priority: 5,
+  },
+  {
+    subject: "英語",
+    title: "Vintage 英文法",
+    minutes: 45,
+    priority: 4,
+  },
+  {
+    subject: "物理",
+    title: "セミナー物理",
+    minutes: 45,
+    priority: 3,
+  },
+  {
+    subject: "化学",
+    title: "セミナー化学",
+    minutes: 45,
+    priority: 3,
+  },
+  {
+    subject: "研究",
+    title: "ギター音源・実験データ整理",
+    minutes: 30,
+    priority: 2,
+  },
+];
 
 const SUBJECTS = [
   "数学",
@@ -272,82 +276,26 @@ function normalizeFixedSchedule(schedule, userId) {
   };
 }
 
-function normalizeWeeklyStudyHours(value) {
-  const source = value && typeof value === "object" ? value : {};
-
-  return Object.fromEntries(
-    WEEKDAYS.map(({ key }) => {
-      const fallback = DEFAULT_WEEKLY_STUDY_HOURS[key];
-      const day = source[key] || {};
-
-      return [
-        key,
-        {
-          enabled: day.enabled !== false,
-          start: day.start || fallback.start,
-          end: day.end || fallback.end,
-        },
-      ];
-    })
-  );
-}
-
 function normalizeSettings(settings) {
-  const source = settings || {};
-  const weeklySource =
-    source.weeklyStudyHours ??
-    source.weekly_study_hours ??
-    DEFAULT_WEEKLY_STUDY_HOURS;
-  const weeklyStudyHours = normalizeWeeklyStudyHours(weeklySource);
-  const firstDay = weeklyStudyHours.monday;
-
   return {
     ...DEFAULT_SETTINGS,
-    wakeUpTime: source.wakeUpTime ?? source.wake_up_time ?? DEFAULT_SETTINGS.wakeUpTime,
+    ...(settings || {}),
     morningPrepMinutes: Math.max(
       0,
-      Number(source.morningPrepMinutes ?? source.morning_prep_minutes) ||
+      Number(settings?.morningPrepMinutes) ||
         DEFAULT_SETTINGS.morningPrepMinutes
-    ),
-    useStudyRoom: Boolean(
-      source.useStudyRoom ?? source.use_study_room ?? DEFAULT_SETTINGS.useStudyRoom
     ),
     travelMinutes: Math.max(
       0,
-      Number(source.travelMinutes ?? source.travel_minutes) ||
+      Number(settings?.travelMinutes) ||
         DEFAULT_SETTINGS.travelMinutes
     ),
-    studyStart: source.studyStart ?? source.study_start ?? firstDay.start,
-    studyEnd: source.studyEnd ?? source.study_end ?? firstDay.end,
     defaultTaskMinutes: Math.max(
       1,
-      Number(source.defaultTaskMinutes ?? source.default_task_minutes) ||
+      Number(settings?.defaultTaskMinutes) ||
         DEFAULT_SETTINGS.defaultTaskMinutes
     ),
-    weeklyStudyHours,
   };
-}
-
-function getWeekdayKey(dateString) {
-  const day = new Date(`${dateString}T00:00:00`).getDay();
-  return [
-    "sunday",
-    "monday",
-    "tuesday",
-    "wednesday",
-    "thursday",
-    "friday",
-    "saturday",
-  ][day];
-}
-
-function getStudyWindow(dateString, settings) {
-  const weekly = normalizeWeeklyStudyHours(settings?.weeklyStudyHours);
-  const day = weekly[getWeekdayKey(dateString)];
-
-  if (!day?.enabled) return null;
-
-  return { start: day.start, end: day.end };
 }
 
 function scheduleAppliesToDate(schedule, dateString) {
@@ -360,12 +308,9 @@ function scheduleAppliesToDate(schedule, dateString) {
 
 function getBlockedIntervals(dateString, settings, fixedSchedules) {
   const blocked = [];
-  const studyWindow = getStudyWindow(dateString, settings);
 
-  if (!studyWindow) return blocked;
-
-  const studyStart = timeToMinutes(studyWindow.start);
-  const studyEnd = timeToMinutes(studyWindow.end);
+  const studyStart = timeToMinutes(settings.studyStart);
+  const studyEnd = timeToMinutes(settings.studyEnd);
   const wake = timeToMinutes(settings.wakeUpTime);
 
   /*
@@ -480,12 +425,8 @@ function mergeIntervals(intervals) {
 }
 
 function getFreeSlots(dateString, settings, fixedSchedules) {
-  const studyWindow = getStudyWindow(dateString, settings);
-
-  if (!studyWindow) return [];
-
-  const studyStart = timeToMinutes(studyWindow.start);
-  const studyEnd = timeToMinutes(studyWindow.end);
+  const studyStart = timeToMinutes(settings.studyStart);
+  const studyEnd = timeToMinutes(settings.studyEnd);
 
   if (studyEnd <= studyStart) return [];
 
@@ -568,6 +509,21 @@ function generatePlan({
     0
   );
 
+  /*
+   集中型プランニング
+
+   1日の科目数を絞り、同じ科目をある程度まとまった時間で進める。
+   既存のタスク構造・固定予定・勉強可能時間はそのまま利用する。
+
+   ・基本は最大3科目/日
+   ・1科目あたり最大90分を1ブロックの目安にする
+   ・同じ科目が複数ブロックにまたがることを許可
+   ・優先度 → 残り時間の順で、その日の中心科目を決める
+   ・選んだ科目を終えたら、次の科目を補充する
+  */
+  const MAX_SUBJECTS_PER_DAY = 3;
+  const TARGET_BLOCK_MINUTES = 90;
+
   const targets = tasks
     .filter(
       (task) =>
@@ -582,49 +538,161 @@ function generatePlan({
           Number(task.studied_minutes || 0)
       ),
     }))
-    .filter((task) => task.remaining > 0)
-    .sort((a, b) => {
+    .filter((task) => task.remaining > 0);
+
+  /* 科目単位にまとめる */
+  const subjectMap = new Map();
+
+  for (const task of targets) {
+    if (!subjectMap.has(task.subject)) {
+      subjectMap.set(task.subject, {
+        subject: task.subject,
+        priority: 0,
+        remaining: 0,
+        tasks: [],
+      });
+    }
+
+    const group = subjectMap.get(task.subject);
+
+    group.priority = Math.max(
+      group.priority,
+      Number(task.priority || 1)
+    );
+    group.remaining += task.remaining;
+    group.tasks.push({ ...task });
+  }
+
+  const subjects = [...subjectMap.values()].sort((a, b) => {
+    if (b.priority !== a.priority) {
+      return b.priority - a.priority;
+    }
+
+    return b.remaining - a.remaining;
+  });
+
+  const plan = [];
+  const plannedBySubject = new Map();
+
+  let slotIndex = 0;
+  let cursor = slots.length > 0 ? slots[0].start : 0;
+  let subjectIndex = 0;
+  let currentSubject = null;
+
+  const getActiveSubjects = () => {
+    const active = [];
+
+    for (const subject of subjects) {
+      const planned = plannedBySubject.get(subject.subject) || 0;
+
+      if (planned < subject.remaining) {
+        active.push(subject);
+      }
+
+      if (active.length >= MAX_SUBJECTS_PER_DAY) {
+        break;
+      }
+    }
+
+    return active;
+  };
+
+  let activeSubjects = getActiveSubjects();
+
+  /*
+   最初の最大3科目を中心に進める。
+   1科目を90分単位でまとめ、次の科目へ移る。
+   90分を使い切ったら次の科目へ、3科目を一周したら再び先頭へ戻る。
+  */
+  while (
+    slotIndex < slots.length &&
+    activeSubjects.length > 0
+  ) {
+    const slot = slots[slotIndex];
+
+    if (cursor < slot.start) {
+      cursor = slot.start;
+    }
+
+    const availableHere = slot.end - cursor;
+
+    if (availableHere <= 0) {
+      slotIndex += 1;
+      if (slots[slotIndex]) {
+        cursor = slots[slotIndex].start;
+      }
+      continue;
+    }
+
+    if (!currentSubject || !activeSubjects.some((x) => x.subject === currentSubject.subject)) {
+      activeSubjects = getActiveSubjects();
+
+      if (activeSubjects.length === 0) {
+        break;
+      }
+
+      currentSubject = activeSubjects[subjectIndex % activeSubjects.length];
+    }
+
+    const subject = currentSubject;
+    const plannedForSubject = plannedBySubject.get(subject.subject) || 0;
+    const remainingForSubject = Math.max(
+      0,
+      subject.remaining - plannedForSubject
+    );
+
+    if (remainingForSubject <= 0) {
+      activeSubjects = getActiveSubjects();
+
+      if (activeSubjects.length === 0) {
+        break;
+      }
+
+      subjectIndex = (subjectIndex + 1) % activeSubjects.length;
+      currentSubject = activeSubjects[subjectIndex];
+      continue;
+    }
+
+    const currentBlockProgress =
+      plannedForSubject % TARGET_BLOCK_MINUTES;
+    const blockRemaining =
+      currentBlockProgress === 0
+        ? TARGET_BLOCK_MINUTES
+        : TARGET_BLOCK_MINUTES - currentBlockProgress;
+
+    const amount = Math.min(
+      remainingForSubject,
+      availableHere,
+      blockRemaining
+    );
+
+    if (amount <= 0) {
+      break;
+    }
+
+    subject.tasks.sort((a, b) => {
       if (b.priority !== a.priority) {
         return b.priority - a.priority;
       }
-
       return b.remaining - a.remaining;
     });
 
-  const plan = [];
+    let remainingAmount = amount;
 
-  let slotIndex = 0;
-  let cursor =
-    slots.length > 0 ? slots[0].start : 0;
+    for (const task of subject.tasks) {
+      if (remainingAmount <= 0) break;
 
-  for (const task of targets) {
-    let remaining = task.remaining;
+      const alreadyPlanned = task._planned || 0;
+      const taskRemaining = Math.max(
+        0,
+        task.remaining - alreadyPlanned
+      );
 
-    while (
-      remaining > 0 &&
-      slotIndex < slots.length
-    ) {
-      const slot = slots[slotIndex];
+      if (taskRemaining <= 0) continue;
 
-      if (cursor < slot.start) {
-        cursor = slot.start;
-      }
-
-      const availableHere = slot.end - cursor;
-
-      if (availableHere <= 0) {
-        slotIndex += 1;
-
-        if (slots[slotIndex]) {
-          cursor = slots[slotIndex].start;
-        }
-
-        continue;
-      }
-
-      const amount = Math.min(
-        remaining,
-        availableHere
+      const taskAmount = Math.min(
+        remainingAmount,
+        taskRemaining
       );
 
       plan.push({
@@ -634,20 +702,53 @@ function generatePlan({
         subject: task.subject,
         priority: task.priority,
         start: cursor,
-        end: cursor + amount,
-        minutes: amount,
+        end: cursor + taskAmount,
+        minutes: taskAmount,
       });
 
-      remaining -= amount;
-      cursor += amount;
+      task._planned = alreadyPlanned + taskAmount;
+      remainingAmount -= taskAmount;
+      cursor += taskAmount;
 
-      if (cursor >= slot.end) {
-        slotIndex += 1;
+      const currentPlanned =
+        plannedBySubject.get(subject.subject) || 0;
+      plannedBySubject.set(
+        subject.subject,
+        currentPlanned + taskAmount
+      );
+    }
 
-        if (slots[slotIndex]) {
-          cursor = slots[slotIndex].start;
-        }
+    const updatedPlanned =
+      plannedBySubject.get(subject.subject) || 0;
+    const subjectFinished = updatedPlanned >= subject.remaining;
+    const blockFinished =
+      updatedPlanned % TARGET_BLOCK_MINUTES === 0 ||
+      subjectFinished;
+
+    if (cursor >= slot.end) {
+      slotIndex += 1;
+      if (slots[slotIndex]) {
+        cursor = slots[slotIndex].start;
       }
+    }
+
+    if (blockFinished || subjectFinished) {
+      activeSubjects = getActiveSubjects();
+
+      if (activeSubjects.length === 0) {
+        break;
+      }
+
+      const currentIndex = activeSubjects.findIndex(
+        (x) => x.subject === subject.subject
+      );
+
+      subjectIndex =
+        currentIndex >= 0
+          ? (currentIndex + 1) % activeSubjects.length
+          : 0;
+
+      currentSubject = activeSubjects[subjectIndex];
     }
   }
 
@@ -953,8 +1054,6 @@ function App() {
   const [fixedSchedules, setFixedSchedules] =
     useState([]);
 
-  const [studyGoals, setStudyGoals] = useState([]);
-
   const [settings, setSettings] = useState(
     DEFAULT_SETTINGS
   );
@@ -1086,7 +1185,6 @@ function App() {
       const [
         tasksResult,
         fixedResult,
-        studyGoalsResult,
         settingsResult,
         profileResult,
         logsResult,
@@ -1111,12 +1209,6 @@ function App() {
           }),
 
         supabase
-          .from("study_goals")
-          .select("*")
-          .eq("user_id", userId)
-          .order("deadline", { ascending: true }),
-
-        supabase
           .from("study_settings")
           .select("*")
           .eq("user_id", userId)
@@ -1137,19 +1229,27 @@ function App() {
           }),
       ]);
 
-      const firstError = [
-        tasksResult,
-        fixedResult,
-        studyGoalsResult,
-        settingsResult,
-        profileResult,
-        logsResult,
-      ].find((result) => result.error)?.error;
-
-      if (firstError) {
-        console.error("Supabaseデータ読み込みエラー:", firstError);
-        throw firstError;
+      if (tasksResult.error) {
+        console.error(tasksResult.error);
       }
+
+      if (fixedResult.error) {
+        console.error(fixedResult.error);
+      }
+
+      if (settingsResult.error) {
+        console.error(settingsResult.error);
+      }
+
+      if (profileResult.error) {
+        console.error(profileResult.error);
+      }
+
+      if (logsResult.error) {
+        console.error(logsResult.error);
+      }
+
+      const local = getLocalData();
 
       const remoteTasks =
         tasksResult.data?.map((task) =>
@@ -1161,27 +1261,152 @@ function App() {
           normalizeFixedSchedule(schedule, userId)
         ) || [];
 
-      const remoteStudyGoals =
-        studyGoalsResult.data?.map((goal) =>
-          normalizeStudyGoal(goal, userId)
-        ) || [];
-
       const remoteSettings = normalizeSettings(
         settingsResult.data
       );
 
       /*
-       認証済みユーザーの正本はSupabase。
-       localStorageから古いタスク・設定を復元しない。
-       これにより、削除済みタスクや以前の設定が
-       勝手に復活することを防ぐ。
-      */
+       初回ログイン時
+       */
 
-      setTasks(remoteTasks);
-      setFixedSchedules(remoteFixed);
-      setStudyGoals(remoteStudyGoals);
-      setSettings(remoteSettings);
-      setSettingsForm(remoteSettings);
+      if (
+        remoteTasks.length === 0 &&
+        remoteFixed.length === 0 &&
+        !settingsResult.data &&
+        local?.tasks?.length
+      ) {
+        const localTasks = local.tasks.map((task) =>
+          normalizeTask(task, userId)
+        );
+
+        const localFixed =
+          local.fixedSchedules?.map((schedule) =>
+            normalizeFixedSchedule(
+              schedule,
+              userId
+            )
+          ) || [];
+
+        const localSettings = normalizeSettings(
+          local.settings
+        );
+
+        await supabase.from("tasks").insert(
+          localTasks.map((task) => ({
+            id: task.id,
+            user_id: userId,
+            subject: task.subject,
+            title: task.title,
+            minutes: task.minutes,
+            priority: task.priority,
+            task_date: task.task_date,
+            completed: task.completed,
+            studied_minutes: task.studied_minutes,
+          }))
+        );
+
+        if (localFixed.length) {
+          await supabase
+            .from("fixed_schedules")
+            .insert(
+              localFixed.map((schedule) => ({
+                id: schedule.id,
+                user_id: userId,
+                title: schedule.title,
+                category: schedule.category,
+                start_time:
+                  schedule.start_time,
+                end_time: schedule.end_time,
+                repeat_type:
+                  schedule.repeat_type,
+                schedule_date:
+                  schedule.schedule_date,
+              }))
+            );
+        }
+
+        await supabase
+          .from("study_settings")
+          .upsert({
+            user_id: userId,
+            wake_up_time:
+              localSettings.wakeUpTime,
+            morning_prep_minutes:
+              localSettings.morningPrepMinutes,
+            use_study_room:
+              localSettings.useStudyRoom,
+            travel_minutes:
+              localSettings.travelMinutes,
+            study_start:
+              localSettings.studyStart,
+            study_end:
+              localSettings.studyEnd,
+            default_task_minutes:
+              localSettings.defaultTaskMinutes,
+          });
+
+        setTasks(localTasks);
+        setFixedSchedules(localFixed);
+        setSettings(localSettings);
+        setSettingsForm(localSettings);
+      } else {
+        /*
+         Supabaseにデータがある場合
+        */
+
+        let nextTasks = remoteTasks;
+        let nextFixed = remoteFixed;
+        let nextSettings = remoteSettings;
+
+        /*
+         完全な新規ユーザーなら
+         初期タスクを作成
+        */
+
+        if (
+          remoteTasks.length === 0 &&
+          !local?.tasks?.length
+        ) {
+          const initialTasks =
+            DEFAULT_TASKS.map((task) =>
+              normalizeTask(
+                {
+                  ...task,
+                  task_date: todayString(),
+                },
+                userId
+              )
+            );
+
+          const { data: insertedTasks } =
+            await supabase
+              .from("tasks")
+              .insert(
+                initialTasks.map((task) => ({
+                  id: task.id,
+                  user_id: userId,
+                  subject: task.subject,
+                  title: task.title,
+                  minutes: task.minutes,
+                  priority: task.priority,
+                  task_date: task.task_date,
+                  completed: false,
+                  studied_minutes: 0,
+                }))
+              )
+              .select();
+
+          nextTasks =
+            insertedTasks?.map((task) =>
+              normalizeTask(task, userId)
+            ) || initialTasks;
+        }
+
+        setTasks(nextTasks);
+        setFixedSchedules(nextFixed);
+        setSettings(nextSettings);
+        setSettingsForm(nextSettings);
+      }
 
       /*
        Profile
@@ -1224,6 +1449,21 @@ function App() {
 
       setStudyLogs(logsResult.data || []);
 
+      /*
+       localStorageにもミラー
+      */
+
+      saveLocalData({
+        tasks:
+          remoteTasks.length > 0
+            ? remoteTasks
+            : tasks,
+        fixedSchedules:
+          remoteFixed.length > 0
+            ? remoteFixed
+            : fixedSchedules,
+        settings: remoteSettings,
+      });
     } catch (error) {
       console.error(error);
       setMessage(
@@ -1240,15 +1480,30 @@ function App() {
     } else {
       setTasks([]);
       setFixedSchedules([]);
-      setStudyGoals([]);
       setStudyLogs([]);
     }
   }, [session, loadData]);
 
   /*
-  localStorageは認証済みデータの正本として使用しない。
-  Supabaseの状態だけを表示・更新する。
+  ================================================
+  localStorageミラー
+  ================================================
   */
+
+  useEffect(() => {
+    if (!session) return;
+
+    saveLocalData({
+      tasks,
+      fixedSchedules,
+      settings,
+    });
+  }, [
+    tasks,
+    fixedSchedules,
+    settings,
+    session,
+  ]);
 
   /*
   ================================================
@@ -1327,7 +1582,7 @@ function App() {
     );
 
     if (session?.user?.id) {
-      const { error: taskUpdateError } = await supabase
+      await supabase
         .from("tasks")
         .update({
           studied_minutes: nextStudied,
@@ -1335,17 +1590,6 @@ function App() {
         })
         .eq("id", task.id)
         .eq("user_id", session.user.id);
-
-      if (taskUpdateError) {
-        console.error("タイマー学習記録エラー:", taskUpdateError);
-        setTasks((current) =>
-          current.map((item) => item.id === task.id ? task : item)
-        );
-        setMessage(`学習記録を保存できませんでした: ${taskUpdateError.message}`);
-        setTimerSeconds(0);
-        setTimerRunning(false);
-        return;
-      }
 
       /*
        study_logsを更新
@@ -1489,7 +1733,7 @@ function App() {
       );
 
       if (userId) {
-        const { error } = await supabase
+        await supabase
           .from("tasks")
           .update({
             subject: updated.subject,
@@ -1500,17 +1744,6 @@ function App() {
           })
           .eq("id", editingTaskId)
           .eq("user_id", userId);
-
-        if (error) {
-          console.error("タスク更新エラー:", error);
-          setTasks((current) =>
-            current.map((task) =>
-              task.id === editingTaskId ? oldTask : task
-            )
-          );
-          setMessage(`タスクを更新できませんでした: ${error.message}`);
-          return;
-        }
       }
 
       setMessage("タスクを更新しました。");
@@ -1539,7 +1772,7 @@ function App() {
       ]);
 
       if (userId) {
-        const { error } = await supabase.from("tasks").insert({
+        await supabase.from("tasks").insert({
           id: newTask.id,
           user_id: userId,
           subject: newTask.subject,
@@ -1550,15 +1783,6 @@ function App() {
           completed: false,
           studied_minutes: 0,
         });
-
-        if (error) {
-          console.error("タスク追加エラー:", error);
-          setTasks((current) =>
-            current.filter((task) => task.id !== newTask.id)
-          );
-          setMessage(`タスクを追加できませんでした: ${error.message}`);
-          return;
-        }
       }
 
       setMessage("タスクを追加しました。");
@@ -1603,21 +1827,13 @@ function App() {
     );
 
     if (session?.user?.id) {
-      const { error } = await supabase
+      await supabase
         .from("tasks")
-        .update({ completed })
+        .update({
+          completed,
+        })
         .eq("id", task.id)
         .eq("user_id", session.user.id);
-
-      if (error) {
-        console.error("タスク完了状態更新エラー:", error);
-        setTasks((current) =>
-          current.map((item) =>
-            item.id === task.id ? task : item
-          )
-        );
-        setMessage(`タスクを更新できませんでした: ${error.message}`);
-      }
     }
   };
 
@@ -1630,30 +1846,19 @@ function App() {
       return;
     }
 
-    const deletedTask = tasks.find((task) => task.id === taskId);
-
     setTasks((current) =>
-      current.filter((task) => task.id !== taskId)
+      current.filter(
+        (task) => task.id !== taskId
+      )
     );
 
     if (session?.user?.id) {
-      const { error } = await supabase
+      await supabase
         .from("tasks")
         .delete()
         .eq("id", taskId)
         .eq("user_id", session.user.id);
-
-      if (error) {
-        console.error("タスク削除エラー:", error);
-        if (deletedTask) {
-          setTasks((current) => [...current, deletedTask]);
-        }
-        setMessage(`タスクを削除できませんでした: ${error.message}`);
-        return;
-      }
     }
-
-    setMessage("タスクを削除しました。");
 
     if (timerTaskId === taskId) {
       resetTimer();
@@ -1755,18 +1960,18 @@ function App() {
   const saveSettings = async (event) => {
     event.preventDefault();
 
-    const normalizedForm = normalizeSettings(settingsForm);
-    const invalidDay = WEEKDAYS.find(({ key }) => {
-      const day = normalizedForm.weeklyStudyHours[key];
-      return day.enabled && timeToMinutes(day.end) <= timeToMinutes(day.start);
-    });
-
-    if (invalidDay) {
-      setMessage(`${invalidDay.label}の勉強終了時刻は開始時刻より後にしてください。`);
+    if (
+      timeToMinutes(settingsForm.studyEnd) <=
+      timeToMinutes(settingsForm.studyStart)
+    ) {
+      setMessage(
+        "勉強終了時刻は開始時刻より後にしてください。"
+      );
       return;
     }
 
-    const nextSettings = normalizedForm;
+    const nextSettings =
+      normalizeSettings(settingsForm);
 
     setSettings(nextSettings);
 
@@ -1789,8 +1994,6 @@ function App() {
             nextSettings.studyEnd,
           default_task_minutes:
             nextSettings.defaultTaskMinutes,
-          weekly_study_hours:
-            nextSettings.weeklyStudyHours,
         });
 
       if (error) {
@@ -1833,231 +2036,29 @@ function App() {
 
   /*
   ================================================
-  参考書・学習目標 CRUD
-  ================================================
-  */
-
-  const createStudyGoal = async (payload) => {
-    const userId = session?.user?.id;
-    if (!userId) {
-      setMessage("ログインが必要です。");
-      return;
-    }
-
-    const goal = normalizeStudyGoal(
-      {
-        id: createId(),
-        user_id: userId,
-        ...payload,
-      },
-      userId
-    );
-
-    setStudyGoals((current) => [...current, goal]);
-
-    const { error } = await supabase
-      .from("study_goals")
-      .insert({
-        id: goal.id,
-        user_id: userId,
-        title: goal.title,
-        subject: goal.subject,
-        total_pages: goal.total_pages,
-        current_page: goal.current_page,
-        deadline: goal.deadline,
-        minutes_per_page: goal.minutes_per_page,
-        priority: goal.priority,
-        is_active: true,
-      });
-
-    if (error) {
-      console.error(error);
-      setStudyGoals((current) =>
-        current.filter((item) => item.id !== goal.id)
-      );
-      setMessage("参考書の登録に失敗しました。");
-      return;
-    }
-
-    setMessage("参考書を登録しました。毎日のページ目標を自動計算します。");
-  };
-
-  const updateStudyGoal = async (goalId, payload) => {
-    const userId = session?.user?.id;
-    if (!userId) return;
-
-    const oldGoal = studyGoals.find((goal) => goal.id === goalId);
-    if (!oldGoal) return;
-
-    const nextGoal = normalizeStudyGoal(
-      {
-        ...oldGoal,
-        ...payload,
-        id: goalId,
-        user_id: userId,
-      },
-      userId
-    );
-
-    setStudyGoals((current) =>
-      current.map((goal) =>
-        goal.id === goalId ? nextGoal : goal
-      )
-    );
-
-    const { error } = await supabase
-      .from("study_goals")
-      .update({
-        title: nextGoal.title,
-        subject: nextGoal.subject,
-        total_pages: nextGoal.total_pages,
-        current_page: nextGoal.current_page,
-        deadline: nextGoal.deadline,
-        minutes_per_page: nextGoal.minutes_per_page,
-        priority: nextGoal.priority,
-        is_active: nextGoal.current_page < nextGoal.total_pages,
-        completed_at:
-          nextGoal.current_page >= nextGoal.total_pages
-            ? new Date().toISOString()
-            : null,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", goalId)
-      .eq("user_id", userId);
-
-    if (error) {
-      console.error(error);
-      setStudyGoals((current) =>
-        current.map((goal) =>
-          goal.id === goalId ? oldGoal : goal
-        )
-      );
-      setMessage("参考書の更新に失敗しました。");
-      return;
-    }
-
-    setMessage("参考書の進捗を更新しました。");
-  };
-
-  const completeStudyGoalToday = async (goalId, page) => {
-    const goal = studyGoals.find((item) => item.id === goalId);
-    if (!goal) return;
-
-    const nextPage = Math.min(
-      Number(goal.total_pages),
-      Math.max(Number(goal.current_page), Number(page) || 0)
-    );
-
-    await updateStudyGoal(goalId, {
-      current_page: nextPage,
-    });
-  };
-
-  const deleteStudyGoal = async (goalId) => {
-    if (!window.confirm("この参考書の目標を削除しますか？")) return;
-
-    setStudyGoals((current) =>
-      current.filter((goal) => goal.id !== goalId)
-    );
-
-    if (session?.user?.id) {
-      const { error } = await supabase
-        .from("study_goals")
-        .delete()
-        .eq("id", goalId)
-        .eq("user_id", session.user.id);
-
-      if (error) {
-        console.error(error);
-        setMessage("参考書の削除に失敗しました。");
-        await loadData();
-        return;
-      }
-    }
-
-    setMessage("参考書を削除しました。");
-  };
-
-  const createScheduleFromPanel = async (payload) => {
-    const schedule = normalizeFixedSchedule(
-      {
-        id: createId(),
-        user_id: session?.user?.id,
-        ...payload,
-      },
-      session?.user?.id
-    );
-
-    setFixedSchedules((current) => [...current, schedule]);
-
-    if (session?.user?.id) {
-      const { error } = await supabase
-        .from("fixed_schedules")
-        .insert({
-          id: schedule.id,
-          user_id: session.user.id,
-          title: schedule.title,
-          category: schedule.category,
-          start_time: schedule.start_time,
-          end_time: schedule.end_time,
-          repeat_type: schedule.repeat_type,
-          schedule_date: schedule.schedule_date,
-        });
-
-      if (error) {
-        console.error(error);
-        setFixedSchedules((current) =>
-          current.filter((item) => item.id !== schedule.id)
-        );
-        setMessage("予定の登録に失敗しました。");
-        return;
-      }
-    }
-
-    setMessage("予定を追加しました。自動計画がこの時間を避けて再計算されます。");
-  };
-
-  /*
-  ================================================
   自動計画
   ================================================
   */
-
-  const dailyGoalTasks = useMemo(
-    () =>
-      buildDailyGoalTasks(
-        studyGoals.filter((goal) => goal.is_active !== false),
-        selectedDate
-      ),
-    [studyGoals, selectedDate]
-  );
-
-  const planningTasks = useMemo(
-    () => [
-      ...tasks.filter((task) => task.task_date === selectedDate),
-      ...dailyGoalTasks,
-    ],
-    [tasks, dailyGoalTasks, selectedDate]
-  );
 
   const planData = useMemo(
     () =>
       generatePlan({
         dateString: selectedDate,
-        tasks: planningTasks,
+        tasks,
         settings,
         fixedSchedules,
       }),
     [
       selectedDate,
-      planningTasks,
+      tasks,
       settings,
       fixedSchedules,
     ]
   );
+
   useEffect(() => {
     setAiAdoptedPlan(null);
-  }, [selectedDate, tasks, studyGoals, settings, fixedSchedules]);
+  }, [selectedDate, tasks, settings, fixedSchedules]);
 /*
 ================================================
 Gemini AI plan
@@ -2093,7 +2094,7 @@ const handleAdoptAIPlan = useCallback(
           return null;
         }
 
-        const matchedTask = planningTasks.find(
+        const matchedTask = tasks.find(
           (task) => {
             if (item.taskId) {
               return task.id === item.taskId;
@@ -2156,7 +2157,7 @@ const handleAdoptAIPlan = useCallback(
       "Gemini AIの学習計画を採用しました。"
     );
   },
-  [planningTasks]
+  [tasks]
 );
 
   /*
@@ -2387,7 +2388,6 @@ const handleAdoptAIPlan = useCallback(
     setSession(null);
     setTasks([]);
     setFixedSchedules([]);
-    setStudyGoals([]);
     setStudyLogs([]);
     setTimerRunning(false);
     setTimerSeconds(0);
@@ -2480,34 +2480,6 @@ const handleAdoptAIPlan = useCallback(
           >
             <span>✦</span>
             自動計画
-          </button>
-
-          <button
-            className={
-              activeTab === "goals"
-                ? "nav-button active"
-                : "nav-button"
-            }
-            onClick={() =>
-              setActiveTab("goals")
-            }
-          >
-            <span>▣</span>
-            参考書
-          </button>
-
-          <button
-            className={
-              activeTab === "schedules"
-                ? "nav-button active"
-                : "nav-button"
-            }
-            onClick={() =>
-              setActiveTab("schedules")
-            }
-          >
-            <span>◷</span>
-            予定・時間
           </button>
 
           <button
@@ -2700,7 +2672,10 @@ const handleAdoptAIPlan = useCallback(
               <div className="content-grid">
                 <AIPlanPanel
   date={selectedDate}
-  tasks={planningTasks}
+  tasks={tasks.filter(
+    (task) =>
+      task.task_date === selectedDate
+  )}
   fixedSchedules={selectedFixedSchedules}
   settings={settings}
   currentPlan={planData.plan}
@@ -3097,13 +3072,6 @@ const handleAdoptAIPlan = useCallback(
                           自動計画から除外されます
                         </p>
                       </div>
-                      <button
-                        type="button"
-                        className="secondary-button small"
-                        onClick={() => setActiveTab("schedules")}
-                      >
-                        予定を管理
-                      </button>
                     </div>
 
                     <form
@@ -3488,16 +3456,15 @@ const handleAdoptAIPlan = useCallback(
                         <button
                           className="secondary-button small"
                           onClick={() => {
-                            if (item.goalId) {
-                              setActiveTab("goals");
-                              return;
-                            }
-
-                            setTimerTaskId(item.taskId);
-                            setActiveTab("today");
+                            setTimerTaskId(
+                              item.taskId
+                            );
+                            setActiveTab(
+                              "today"
+                            );
                           }}
                         >
-                          {item.goalId ? "参考書を開く" : "▶ 開始"}
+                          ▶ 開始
                         </button>
                       </div>
                     )
@@ -3550,27 +3517,6 @@ const handleAdoptAIPlan = useCallback(
           CALENDAR
           ========================================
           */}
-
-          {activeTab === "goals" && (
-            <StudyGoalPanel
-              goals={studyGoals}
-              selectedDate={selectedDate}
-              subjects={SUBJECTS}
-              onCreate={createStudyGoal}
-              onUpdate={updateStudyGoal}
-              onDelete={deleteStudyGoal}
-              onCompleteToday={completeStudyGoalToday}
-            />
-          )}
-
-          {activeTab === "schedules" && (
-            <SchedulePanel
-              selectedDate={selectedDate}
-              schedules={selectedFixedSchedules}
-              onCreate={createScheduleFromPanel}
-              onDelete={deleteFixedSchedule}
-            />
-          )}
 
           {activeTab === "calendar" && (
             <>
@@ -4105,83 +4051,46 @@ const handleAdoptAIPlan = useCallback(
                       </label>
                     </div>
 
-                    <div className="settings-note">
-                      勉強開始・終了時刻は、下の「曜日ごとの勉強可能時間」で設定します。
-                    </div>
+                    <div className="form-row">
+                      <label>
+                        勉強開始
+                        <input
+                          type="time"
+                          value={
+                            settingsForm.studyStart
+                          }
+                          onChange={(e) =>
+                            setSettingsForm(
+                              (current) => ({
+                                ...current,
+                                studyStart:
+                                  e.target
+                                    .value,
+                              })
+                            )
+                          }
+                        />
+                      </label>
 
-                    <div className="weekly-study-settings">
-                      <div className="weekly-study-heading">
-                        <strong>曜日ごとの勉強可能時間</strong>
-                        <span>曜日によって違う時間帯を個別に設定できます。</span>
-                      </div>
-
-                      <div className="weekly-study-list">
-                        {WEEKDAYS.map(({ key, label }) => {
-                          const day = settingsForm.weeklyStudyHours[key];
-
-                          return (
-                            <div className="weekly-study-row" key={key}>
-                              <label className="weekly-day-toggle">
-                                <input
-                                  type="checkbox"
-                                  checked={day.enabled}
-                                  onChange={(e) =>
-                                    setSettingsForm((current) => ({
-                                      ...current,
-                                      weeklyStudyHours: {
-                                        ...current.weeklyStudyHours,
-                                        [key]: {
-                                          ...current.weeklyStudyHours[key],
-                                          enabled: e.target.checked,
-                                        },
-                                      },
-                                    }))
-                                  }
-                                />
-                                <span>{label}</span>
-                              </label>
-
-                              <div className="weekly-time-fields">
-                                <input
-                                  type="time"
-                                  value={day.start}
-                                  disabled={!day.enabled}
-                                  onChange={(e) =>
-                                    setSettingsForm((current) => ({
-                                      ...current,
-                                      weeklyStudyHours: {
-                                        ...current.weeklyStudyHours,
-                                        [key]: {
-                                          ...current.weeklyStudyHours[key],
-                                          start: e.target.value,
-                                        },
-                                      },
-                                    }))
-                                  }
-                                />
-                                <span>〜</span>
-                                <input
-                                  type="time"
-                                  value={day.end}
-                                  disabled={!day.enabled}
-                                  onChange={(e) =>
-                                    setSettingsForm((current) => ({
-                                      ...current,
-                                      weeklyStudyHours: {
-                                        ...current.weeklyStudyHours,
-                                        [key]: {
-                                          ...current.weeklyStudyHours[key],
-                                          end: e.target.value,
-                                        },
-                                      },
-                                    }))
-                                  }
-                                />
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
+                      <label>
+                        勉強終了
+                        <input
+                          type="time"
+                          value={
+                            settingsForm.studyEnd
+                          }
+                          onChange={(e) =>
+                            setSettingsForm(
+                              (current) => ({
+                                ...current,
+                                studyEnd:
+                                  e.target
+                                    .value,
+                              })
+                            )
+                          }
+                        />
+                      </label>
                     </div>
 
                     <label className="checkbox-row">
@@ -4290,11 +4199,10 @@ const handleAdoptAIPlan = useCallback(
                   </div>
 
                   <div>
-                    <span>今日の勉強時間</span>
+                    <span>勉強時間</span>
                     <strong>
-                      {getStudyWindow(selectedDate, settings)
-                        ? `${getStudyWindow(selectedDate, settings).start}〜${getStudyWindow(selectedDate, settings).end}`
-                        : "設定なし"}
+                      {settings.studyStart}〜
+                      {settings.studyEnd}
                     </strong>
                   </div>
 
