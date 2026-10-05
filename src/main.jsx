@@ -55,38 +55,7 @@ const DEFAULT_SETTINGS = {
   defaultTaskMinutes: 45,
 };
 
-const DEFAULT_TASKS = [
-  {
-    subject: "数学",
-    title: "基礎問題精講 数III 積分",
-    minutes: 60,
-    priority: 5,
-  },
-  {
-    subject: "英語",
-    title: "Vintage 英文法",
-    minutes: 45,
-    priority: 4,
-  },
-  {
-    subject: "物理",
-    title: "セミナー物理",
-    minutes: 45,
-    priority: 3,
-  },
-  {
-    subject: "化学",
-    title: "セミナー化学",
-    minutes: 45,
-    priority: 3,
-  },
-  {
-    subject: "研究",
-    title: "ギター音源・実験データ整理",
-    minutes: 30,
-    priority: 2,
-  },
-];
+
 
 const SUBJECTS = [
   "数学",
@@ -283,22 +252,29 @@ function normalizeFixedSchedule(schedule, userId) {
 }
 
 function normalizeSettings(settings) {
+  const source = settings || {};
+
   return {
     ...DEFAULT_SETTINGS,
-    ...(settings || {}),
+    wakeUpTime: source.wakeUpTime ?? source.wake_up_time ?? DEFAULT_SETTINGS.wakeUpTime,
     morningPrepMinutes: Math.max(
       0,
-      Number(settings?.morningPrepMinutes) ||
+      Number(source.morningPrepMinutes ?? source.morning_prep_minutes) ||
         DEFAULT_SETTINGS.morningPrepMinutes
+    ),
+    useStudyRoom: Boolean(
+      source.useStudyRoom ?? source.use_study_room ?? DEFAULT_SETTINGS.useStudyRoom
     ),
     travelMinutes: Math.max(
       0,
-      Number(settings?.travelMinutes) ||
+      Number(source.travelMinutes ?? source.travel_minutes) ||
         DEFAULT_SETTINGS.travelMinutes
     ),
+    studyStart: source.studyStart ?? source.study_start ?? DEFAULT_SETTINGS.studyStart,
+    studyEnd: source.studyEnd ?? source.study_end ?? DEFAULT_SETTINGS.studyEnd,
     defaultTaskMinutes: Math.max(
       1,
-      Number(settings?.defaultTaskMinutes) ||
+      Number(source.defaultTaskMinutes ?? source.default_task_minutes) ||
         DEFAULT_SETTINGS.defaultTaskMinutes
     ),
   };
@@ -1084,31 +1060,19 @@ function App() {
           }),
       ]);
 
-      if (tasksResult.error) {
-        console.error(tasksResult.error);
-      }
+      const firstError = [
+        tasksResult,
+        fixedResult,
+        studyGoalsResult,
+        settingsResult,
+        profileResult,
+        logsResult,
+      ].find((result) => result.error)?.error;
 
-      if (fixedResult.error) {
-        console.error(fixedResult.error);
+      if (firstError) {
+        console.error("Supabaseデータ読み込みエラー:", firstError);
+        throw firstError;
       }
-
-      if (studyGoalsResult.error) {
-        console.error(studyGoalsResult.error);
-      }
-
-      if (settingsResult.error) {
-        console.error(settingsResult.error);
-      }
-
-      if (profileResult.error) {
-        console.error(profileResult.error);
-      }
-
-      if (logsResult.error) {
-        console.error(logsResult.error);
-      }
-
-      const local = getLocalData();
 
       const remoteTasks =
         tasksResult.data?.map((task) =>
@@ -1125,187 +1089,22 @@ function App() {
           normalizeStudyGoal(goal, userId)
         ) || [];
 
-      const localStudyGoals =
-        local?.studyGoals?.map((goal) =>
-          normalizeStudyGoal(goal, userId)
-        ) || [];
-
       const remoteSettings = normalizeSettings(
         settingsResult.data
       );
 
       /*
-       初回ログイン時
-       */
+       認証済みユーザーの正本はSupabase。
+       localStorageから古いタスク・設定を復元しない。
+       これにより、削除済みタスクや以前の設定が
+       勝手に復活することを防ぐ。
+      */
 
-      if (
-        remoteTasks.length === 0 &&
-        remoteFixed.length === 0 &&
-        !settingsResult.data &&
-        local?.tasks?.length
-      ) {
-        const localTasks = local.tasks.map((task) =>
-          normalizeTask(task, userId)
-        );
-
-        const localFixed =
-          local.fixedSchedules?.map((schedule) =>
-            normalizeFixedSchedule(
-              schedule,
-              userId
-            )
-          ) || [];
-
-        const localSettings = normalizeSettings(
-          local.settings
-        );
-
-        const localGoals =
-          local?.studyGoals?.map((goal) =>
-            normalizeStudyGoal(goal, userId)
-          ) || [];
-
-        await supabase.from("tasks").insert(
-          localTasks.map((task) => ({
-            id: task.id,
-            user_id: userId,
-            subject: task.subject,
-            title: task.title,
-            minutes: task.minutes,
-            priority: task.priority,
-            task_date: task.task_date,
-            completed: task.completed,
-            studied_minutes: task.studied_minutes,
-          }))
-        );
-
-        if (localGoals.length) {
-          await supabase
-            .from("study_goals")
-            .insert(
-              localGoals.map((goal) => ({
-                id: goal.id,
-                user_id: userId,
-                title: goal.title,
-                subject: goal.subject,
-                total_pages: goal.total_pages,
-                current_page: goal.current_page,
-                deadline: goal.deadline,
-                minutes_per_page: goal.minutes_per_page,
-                priority: goal.priority,
-                is_active: true,
-              }))
-            );
-        }
-
-        if (localFixed.length) {
-          await supabase
-            .from("fixed_schedules")
-            .insert(
-              localFixed.map((schedule) => ({
-                id: schedule.id,
-                user_id: userId,
-                title: schedule.title,
-                category: schedule.category,
-                start_time:
-                  schedule.start_time,
-                end_time: schedule.end_time,
-                repeat_type:
-                  schedule.repeat_type,
-                schedule_date:
-                  schedule.schedule_date,
-              }))
-            );
-        }
-
-        await supabase
-          .from("study_settings")
-          .upsert({
-            user_id: userId,
-            wake_up_time:
-              localSettings.wakeUpTime,
-            morning_prep_minutes:
-              localSettings.morningPrepMinutes,
-            use_study_room:
-              localSettings.useStudyRoom,
-            travel_minutes:
-              localSettings.travelMinutes,
-            study_start:
-              localSettings.studyStart,
-            study_end:
-              localSettings.studyEnd,
-            default_task_minutes:
-              localSettings.defaultTaskMinutes,
-          });
-
-        setTasks(localTasks);
-        setFixedSchedules(localFixed);
-        setStudyGoals(localGoals);
-        setSettings(localSettings);
-        setSettingsForm(localSettings);
-      } else {
-        /*
-         Supabaseにデータがある場合
-        */
-
-        let nextTasks = remoteTasks;
-        let nextFixed = remoteFixed;
-        let nextSettings = remoteSettings;
-
-        /*
-         完全な新規ユーザーなら
-         初期タスクを作成
-        */
-
-        if (
-          remoteTasks.length === 0 &&
-          !local?.tasks?.length
-        ) {
-          const initialTasks =
-            DEFAULT_TASKS.map((task) =>
-              normalizeTask(
-                {
-                  ...task,
-                  task_date: todayString(),
-                },
-                userId
-              )
-            );
-
-          const { data: insertedTasks } =
-            await supabase
-              .from("tasks")
-              .insert(
-                initialTasks.map((task) => ({
-                  id: task.id,
-                  user_id: userId,
-                  subject: task.subject,
-                  title: task.title,
-                  minutes: task.minutes,
-                  priority: task.priority,
-                  task_date: task.task_date,
-                  completed: false,
-                  studied_minutes: 0,
-                }))
-              )
-              .select();
-
-          nextTasks =
-            insertedTasks?.map((task) =>
-              normalizeTask(task, userId)
-            ) || initialTasks;
-        }
-
-        setTasks(nextTasks);
-        setFixedSchedules(nextFixed);
-        setStudyGoals(
-          remoteStudyGoals.length > 0
-            ? remoteStudyGoals
-            : localStudyGoals
-        );
-        setSettings(nextSettings);
-        setSettingsForm(nextSettings);
-      }
+      setTasks(remoteTasks);
+      setFixedSchedules(remoteFixed);
+      setStudyGoals(remoteStudyGoals);
+      setSettings(remoteSettings);
+      setSettingsForm(remoteSettings);
 
       /*
        Profile
@@ -1348,25 +1147,6 @@ function App() {
 
       setStudyLogs(logsResult.data || []);
 
-      /*
-       localStorageにもミラー
-      */
-
-      saveLocalData({
-        tasks:
-          remoteTasks.length > 0
-            ? remoteTasks
-            : tasks,
-        fixedSchedules:
-          remoteFixed.length > 0
-            ? remoteFixed
-            : fixedSchedules,
-        settings: remoteSettings,
-        studyGoals:
-          remoteStudyGoals.length > 0
-            ? remoteStudyGoals
-            : localStudyGoals,
-      });
     } catch (error) {
       console.error(error);
       setMessage(
@@ -1389,27 +1169,9 @@ function App() {
   }, [session, loadData]);
 
   /*
-  ================================================
-  localStorageミラー
-  ================================================
+  localStorageは認証済みデータの正本として使用しない。
+  Supabaseの状態だけを表示・更新する。
   */
-
-  useEffect(() => {
-    if (!session) return;
-
-    saveLocalData({
-      tasks,
-      fixedSchedules,
-      settings,
-      studyGoals,
-    });
-  }, [
-    tasks,
-    fixedSchedules,
-    settings,
-    studyGoals,
-    session,
-  ]);
 
   /*
   ================================================
@@ -1488,7 +1250,7 @@ function App() {
     );
 
     if (session?.user?.id) {
-      await supabase
+      const { error: taskUpdateError } = await supabase
         .from("tasks")
         .update({
           studied_minutes: nextStudied,
@@ -1496,6 +1258,17 @@ function App() {
         })
         .eq("id", task.id)
         .eq("user_id", session.user.id);
+
+      if (taskUpdateError) {
+        console.error("タイマー学習記録エラー:", taskUpdateError);
+        setTasks((current) =>
+          current.map((item) => item.id === task.id ? task : item)
+        );
+        setMessage(`学習記録を保存できませんでした: ${taskUpdateError.message}`);
+        setTimerSeconds(0);
+        setTimerRunning(false);
+        return;
+      }
 
       /*
        study_logsを更新
@@ -1639,7 +1412,7 @@ function App() {
       );
 
       if (userId) {
-        await supabase
+        const { error } = await supabase
           .from("tasks")
           .update({
             subject: updated.subject,
@@ -1650,6 +1423,17 @@ function App() {
           })
           .eq("id", editingTaskId)
           .eq("user_id", userId);
+
+        if (error) {
+          console.error("タスク更新エラー:", error);
+          setTasks((current) =>
+            current.map((task) =>
+              task.id === editingTaskId ? oldTask : task
+            )
+          );
+          setMessage(`タスクを更新できませんでした: ${error.message}`);
+          return;
+        }
       }
 
       setMessage("タスクを更新しました。");
@@ -1678,7 +1462,7 @@ function App() {
       ]);
 
       if (userId) {
-        await supabase.from("tasks").insert({
+        const { error } = await supabase.from("tasks").insert({
           id: newTask.id,
           user_id: userId,
           subject: newTask.subject,
@@ -1689,6 +1473,15 @@ function App() {
           completed: false,
           studied_minutes: 0,
         });
+
+        if (error) {
+          console.error("タスク追加エラー:", error);
+          setTasks((current) =>
+            current.filter((task) => task.id !== newTask.id)
+          );
+          setMessage(`タスクを追加できませんでした: ${error.message}`);
+          return;
+        }
       }
 
       setMessage("タスクを追加しました。");
@@ -1733,13 +1526,21 @@ function App() {
     );
 
     if (session?.user?.id) {
-      await supabase
+      const { error } = await supabase
         .from("tasks")
-        .update({
-          completed,
-        })
+        .update({ completed })
         .eq("id", task.id)
         .eq("user_id", session.user.id);
+
+      if (error) {
+        console.error("タスク完了状態更新エラー:", error);
+        setTasks((current) =>
+          current.map((item) =>
+            item.id === task.id ? task : item
+          )
+        );
+        setMessage(`タスクを更新できませんでした: ${error.message}`);
+      }
     }
   };
 
@@ -1752,19 +1553,30 @@ function App() {
       return;
     }
 
+    const deletedTask = tasks.find((task) => task.id === taskId);
+
     setTasks((current) =>
-      current.filter(
-        (task) => task.id !== taskId
-      )
+      current.filter((task) => task.id !== taskId)
     );
 
     if (session?.user?.id) {
-      await supabase
+      const { error } = await supabase
         .from("tasks")
         .delete()
         .eq("id", taskId)
         .eq("user_id", session.user.id);
+
+      if (error) {
+        console.error("タスク削除エラー:", error);
+        if (deletedTask) {
+          setTasks((current) => [...current, deletedTask]);
+        }
+        setMessage(`タスクを削除できませんでした: ${error.message}`);
+        return;
+      }
     }
+
+    setMessage("タスクを削除しました。");
 
     if (timerTaskId === taskId) {
       resetTimer();
