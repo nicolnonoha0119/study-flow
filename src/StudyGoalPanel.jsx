@@ -1,295 +1,163 @@
-import React, { useMemo, useState } from 'react';
-import { getGoalStats } from './studyGoalEngine';
+/*
+  StudyFlow - Study Goal Engine
+  参考書のページ進捗と締切から、毎日の学習目標を計算する純粋関数。
+*/
 
-const EMPTY_FORM = {
-  title: '',
-  subject: '数学',
-  totalPages: 100,
-  currentPage: 0,
-  deadline: '',
-  minutesPerPage: 3,
-  priority: 4,
-};
-
-function formatMinutes(minutes) {
-  const value = Math.max(0, Math.round(minutes || 0));
-  const h = Math.floor(value / 60);
-  const m = value % 60;
-  if (!h) return `${m}分`;
-  if (!m) return `${h}時間`;
-  return `${h}時間${m}分`;
+export function dateToLocal(dateString) {
+  return new Date(`${dateString}T00:00:00`);
 }
 
-export default function StudyGoalPanel({
-  goals = [],
-  selectedDate,
-  subjects = [],
-  onCreate,
-  onUpdate,
-  onDelete,
-  onCompleteToday,
-}) {
-  const [form, setForm] = useState({
-    ...EMPTY_FORM,
-    deadline: selectedDate,
-    subject: subjects[0] || 'その他',
-  });
-  const [editingId, setEditingId] = useState(null);
+export function diffDays(fromDate, toDate) {
+  const a = dateToLocal(fromDate);
+  const b = dateToLocal(toDate);
+  return Math.round((b - a) / 86400000);
+}
 
-  const goalSummaries = useMemo(
-    () => goals.map((goal) => ({
-      goal,
-      stats: getGoalStats(goal, selectedDate),
-    })),
-    [goals, selectedDate]
+export function todayDateString() {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+export function normalizeStudyGoal(goal, userId) {
+  const totalPages = Math.max(1, Number(goal?.total_pages ?? goal?.totalPages) || 1);
+  const currentPage = Math.min(
+    totalPages,
+    Math.max(0, Number(goal?.current_page ?? goal?.currentPage) || 0)
   );
 
-  const save = async (event) => {
-    event.preventDefault();
-    const title = form.title.trim();
-    if (!title) return;
-
-    const payload = {
-      title,
-      subject: form.subject,
-      total_pages: Math.max(1, Number(form.totalPages) || 1),
-      current_page: Math.max(0, Number(form.currentPage) || 0),
-      deadline: form.deadline || selectedDate,
-      minutes_per_page: Math.max(0.5, Number(form.minutesPerPage) || 3),
-      priority: Math.min(5, Math.max(1, Number(form.priority) || 4)),
-    };
-
-    if (editingId) {
-      await onUpdate(editingId, payload);
-    } else {
-      await onCreate(payload);
-    }
-
-    setEditingId(null);
-    setForm({
-      ...EMPTY_FORM,
-      deadline: selectedDate,
-      subject: subjects[0] || 'その他',
-    });
+  return {
+    id: goal?.id || crypto.randomUUID(),
+    user_id: goal?.user_id || userId,
+    title: goal?.title || '参考書',
+    subject: goal?.subject || 'その他',
+    total_pages: totalPages,
+    current_page: currentPage,
+    deadline: goal?.deadline || todayDateString(),
+    minutes_per_page: Math.max(
+      0.5,
+      Number(goal?.minutes_per_page ?? goal?.minutesPerPage) || 3
+    ),
+    priority: Math.min(
+      5,
+      Math.max(1, Number(goal?.priority) || 4)
+    ),
+    created_at: goal?.created_at || new Date().toISOString(),
   };
+}
 
-  const edit = (goal) => {
-    setEditingId(goal.id);
-    setForm({
-      title: goal.title,
-      subject: goal.subject,
-      totalPages: goal.total_pages,
-      currentPage: goal.current_page,
-      deadline: goal.deadline,
-      minutesPerPage: goal.minutes_per_page,
-      priority: goal.priority,
-    });
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
+export function getGoalStats(goal, dateString = todayDateString()) {
+  const total = Math.max(1, Number(goal.total_pages) || 1);
+  const current = Math.min(total, Math.max(0, Number(goal.current_page) || 0));
+  const remaining = Math.max(0, total - current);
+  const percent = Math.min(100, Math.round((current / total) * 100));
 
-  return (
-    <div className="study-goals-page">
-      <div className="page-header">
-        <div>
-          <p className="eyebrow">STUDY GOALS</p>
-          <h1>参考書・教材</h1>
-          <p className="page-description">
-            参考書の進捗と締切を登録すると、毎日のページ数を自動で逆算します。
-          </p>
-        </div>
-      </div>
+  const rawDaysLeft = diffDays(dateString, goal.deadline) + 1;
+  const daysLeft = Math.max(1, rawDaysLeft);
+  const pagesPerDay = remaining > 0 ? Math.ceil(remaining / daysLeft) : 0;
+  const minutesPerDay = Math.ceil(pagesPerDay * Number(goal.minutes_per_page || 3));
 
-      <div className="content-grid">
-        <section className="card">
-          <div className="section-header">
-            <div>
-              <h2>{editingId ? '参考書を編集' : '参考書を登録'}</h2>
-              <p>ページ数と締切から毎日の目標を作ります。</p>
-            </div>
-          </div>
+  let todayStartPage = current + 1;
+  let todayEndPage = current;
 
-          <form className="settings-form" onSubmit={save}>
-            <label>
-              参考書名
-              <input
-                value={form.title}
-                onChange={(e) => setForm((v) => ({ ...v, title: e.target.value }))}
-                placeholder="例：青チャート 数III"
-              />
-            </label>
+  if (remaining > 0 && rawDaysLeft >= 1) {
+    todayEndPage = Math.min(total, current + pagesPerDay);
+  }
 
-            <div className="form-row">
-              <label>
-                科目
-                <select
-                  value={form.subject}
-                  onChange={(e) => setForm((v) => ({ ...v, subject: e.target.value }))}
-                >
-                  {(subjects.length ? subjects : ['その他']).map((subject) => (
-                    <option key={subject} value={subject}>{subject}</option>
-                  ))}
-                </select>
-              </label>
-
-              <label>
-                総ページ数
-                <input
-                  type="number"
-                  min="1"
-                  value={form.totalPages}
-                  onChange={(e) => setForm((v) => ({ ...v, totalPages: e.target.value }))}
-                />
-              </label>
-            </div>
-
-            <div className="form-row">
-              <label>
-                現在のページ
-                <input
-                  type="number"
-                  min="0"
-                  value={form.currentPage}
-                  onChange={(e) => setForm((v) => ({ ...v, currentPage: e.target.value }))}
-                />
-              </label>
-
-              <label>
-                終了したい日
-                <input
-                  type="date"
-                  value={form.deadline}
-                  onChange={(e) => setForm((v) => ({ ...v, deadline: e.target.value }))}
-                />
-              </label>
-            </div>
-
-            <div className="form-row">
-              <label>
-                1ページあたりの目安（分）
-                <input
-                  type="number"
-                  min="0.5"
-                  step="0.5"
-                  value={form.minutesPerPage}
-                  onChange={(e) => setForm((v) => ({ ...v, minutesPerPage: e.target.value }))}
-                />
-              </label>
-
-              <label>
-                優先度
-                <select
-                  value={form.priority}
-                  onChange={(e) => setForm((v) => ({ ...v, priority: Number(e.target.value) }))}
-                >
-                  <option value="5">★★★★★</option>
-                  <option value="4">★★★★</option>
-                  <option value="3">★★★</option>
-                  <option value="2">★★</option>
-                  <option value="1">★</option>
-                </select>
-              </label>
-            </div>
-
-            <div className="form-actions">
-              <button className="primary-button" type="submit">
-                {editingId ? '参考書を更新' : '参考書を登録'}
-              </button>
-              {editingId && (
-                <button
-                  className="secondary-button"
-                  type="button"
-                  onClick={() => {
-                    setEditingId(null);
-                    setForm({ ...EMPTY_FORM, deadline: selectedDate, subject: subjects[0] || 'その他' });
-                  }}
-                >
-                  キャンセル
-                </button>
-              )}
-            </div>
-          </form>
-        </section>
-
-        <section className="card">
-          <div className="section-header">
-            <div>
-              <h2>モチベーション</h2>
-              <p>今日の進み具合と締切までのペース</p>
-            </div>
-          </div>
-
-          {goalSummaries.length === 0 ? (
-            <div className="empty-state">
-              <strong>まだ参考書がありません</strong>
-              <p>左側から参考書を登録すると、ここに進捗が表示されます。</p>
-            </div>
-          ) : (
-            <div className="goal-summary-list">
-              {goalSummaries.map(({ goal, stats }) => (
-                <div className="goal-summary-card" key={goal.id}>
-                  <div className="goal-summary-top">
-                    <div>
-                      <span className="subject-tag">{goal.subject}</span>
-                      <h3>{goal.title}</h3>
-                    </div>
-                    <strong>{stats.progressPercent}%</strong>
-                  </div>
-
-                  <div className="progress-line large">
-                    <div style={{ width: `${stats.progressPercent}%` }} />
-                  </div>
-
-                  <div className="goal-stat-grid">
-                    <div><span>残り</span><strong>{stats.remainingPages}p</strong></div>
-                    <div><span>あと</span><strong>{stats.daysLeft}日</strong></div>
-                    <div><span>1日</span><strong>{stats.pagesPerDay}p</strong></div>
-                    <div><span>目安</span><strong>{formatMinutes(stats.minutesPerDay)}</strong></div>
-                  </div>
-
-                  <div className="goal-today-card">
-                    <div>
-                      <span>今日の目標</span>
-                      <strong>
-                        {stats.todayTargetPages > 0
-                          ? `P.${stats.todayStartPage}〜${stats.todayEndPage}`
-                          : '完了'}
-                      </strong>
-                    </div>
-                    <div>
-                      <span>今日の達成</span>
-                      <strong>{stats.todayPercent}%</strong>
-                    </div>
-                  </div>
-
-                  <div className="form-actions">
-                    {stats.todayTargetPages > 0 && (
-                      <button
-                        className="primary-button"
-                        type="button"
-                        onClick={() => onCompleteToday(goal.id, stats.todayEndPage)}
-                      >
-                        今日のページを完了
-                      </button>
-                    )}
-                    <button className="secondary-button" type="button" onClick={() => edit(goal)}>
-                      編集
-                    </button>
-                    <button className="ghost-button" type="button" onClick={() => onDelete(goal.id)}>
-                      削除
-                    </button>
-                  </div>
-
-                  <p className={stats.overdue ? 'goal-warning' : 'goal-message'}>
-                    {stats.overdue
-                      ? '締切を過ぎています。残りページを今日から再配分します。'
-                      : `このままなら、1日${stats.pagesPerDay}ページほど進めれば${goal.deadline}までに完了できます。`}
-                  </p>
-                </div>
-              ))}
-            </div>
-          )}
-        </section>
-      </div>
-    </div>
+  const todayTargetPages = Math.max(0, todayEndPage - todayStartPage + 1);
+  const todayDonePages = Math.max(
+    0,
+    Math.min(todayTargetPages, current - todayStartPage + 1)
   );
+  const todayPercent = todayTargetPages > 0
+    ? Math.min(100, Math.round((todayDonePages / todayTargetPages) * 100))
+    : 100;
+
+  return {
+    totalPages: total,
+    currentPage: current,
+    remainingPages: remaining,
+    progressPercent: percent,
+    daysLeft,
+    overdue: rawDaysLeft < 1 && remaining > 0,
+    pagesPerDay,
+    minutesPerDay,
+    todayStartPage,
+    todayEndPage,
+    todayTargetPages,
+    todayDonePages,
+    todayPercent,
+  };
+}
+
+/*
+  selected date が今日より未来なら、期限までの残ページを
+  「今日を含む残日数」で線形配分した累積到達ページを使います。
+  毎日 current_page が更新されれば、翌日の計画は自動で再配分されます。
+*/
+export function getDailyGoalTarget(goal, dateString, baseDate = todayDateString()) {
+  const total = Math.max(1, Number(goal.total_pages) || 1);
+  const current = Math.min(total, Math.max(0, Number(goal.current_page) || 0));
+  const remaining = Math.max(0, total - current);
+  const deadlineDays = diffDays(baseDate, goal.deadline) + 1;
+  const offset = diffDays(baseDate, dateString);
+
+  if (remaining <= 0 || deadlineDays <= 0 || offset < 0 || offset >= deadlineDays) {
+    return null;
+  }
+
+  const cumulativeEnd = Math.min(
+    total,
+    current + Math.ceil((remaining * (offset + 1)) / deadlineDays)
+  );
+
+  const previousCumulativeEnd = offset === 0
+    ? current
+    : Math.min(
+        total,
+        current + Math.ceil((remaining * offset) / deadlineDays)
+      );
+
+  const startPage = previousCumulativeEnd + 1;
+  const endPage = cumulativeEnd;
+  const pages = Math.max(0, endPage - startPage + 1);
+
+  if (pages <= 0) return null;
+
+  return {
+    startPage,
+    endPage,
+    pages,
+    minutes: Math.max(1, Math.ceil(pages * Number(goal.minutes_per_page || 3))),
+  };
+}
+
+export function buildDailyGoalTasks(goals = [], dateString, baseDate = todayDateString()) {
+  return goals
+    .map((goal) => {
+      const target = getDailyGoalTarget(goal, dateString, baseDate);
+      if (!target) return null;
+
+      const stats = getGoalStats(goal, baseDate);
+      const pressure = stats.minutesPerDay > 180 ? 5 : stats.minutesPerDay > 120 ? 4 : 3;
+
+      return {
+        id: `goal-${goal.id}-${dateString}`,
+        goalId: goal.id,
+        title: `${goal.title}　P.${target.startPage}〜${target.endPage}`,
+        subject: goal.subject,
+        minutes: target.minutes,
+        priority: Math.max(Number(goal.priority || 4), pressure),
+        task_date: dateString,
+        completed: false,
+        studied_minutes: 0,
+        source: 'study_goal',
+        goalStartPage: target.startPage,
+        goalEndPage: target.endPage,
+        goalPages: target.pages,
+      };
+    })
+    .filter(Boolean);
 }
