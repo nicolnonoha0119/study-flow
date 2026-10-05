@@ -2691,3 +2691,59 @@ label select {
     gap: 9px;
   }
 }
+
+/* =========================================
+   Design-only fix: actual plan page selectors
+   App.jsx is intentionally NOT changed.
+   The previous .plan-page rules could not apply because
+   the current App does not render a .plan-page wrapper.
+========================================= */
+
+@supports selector(main:has(.planning-summary)) {
+  /* The plan screen is the main-content that contains planning-summary. */
+  .main-content:has(.planning-summary) > section.card {
+    height: auto !important;
+    min-height: 0 !important;
+    flex: none !important;
+    padding: 18px 20px !important;
+    box-sizing: border-box;
+  }
+
+  /* Keep the first plan card compact. */
+  .main-content:has(.planning-summary) > section.card:first-of-type .section-header {
+    margin-bottom: 7px !important;
+  }
+
+  .main-content:has(.planning-summary) > section.card:first-of-type .form-actions {
+    margin: 0 0 3px !important;
+    min-height: 0 !important;
+    padding: 0 !important;
+  }
+
+  .main-content:has(.planning-summary) > section.card:first-of-type .plan-list {
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  .main-content:has(.planning-summary) > section.card:first-of-type .plan-item {
+    min-height: 0 !important;
+    padding: 9px 0 !important;
+  }
+
+  /* The available-time card should be only as tall as its content. */
+  .main-content:has(.planning-summary) > section.card:last-of-type .section-header {
+    margin-bottom: 7px !important;
+  }
+
+  .main-content:has(.planning-summary) > section.card:last-of-type .slot-list {
+    margin: 0 !important;
+    padding: 0 !important;
+    align-items: start;
+  }
+
+  .main-content:has(.planning-summary) > section.card:last-of-type .slot-item {
+    min-height: 0 !important;
+    padding: 11px 13px !important;
+    align-self: start;
+  }
+}
