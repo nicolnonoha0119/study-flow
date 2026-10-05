@@ -7,6 +7,12 @@ import React, {
 import { createRoot } from "react-dom/client";
 import { supabase } from "./supabase";
 import AIPlanPanel from "./AIPlanPanel";
+import StudyGoalPanel from "./StudyGoalPanel";
+import SchedulePanel from "./SchedulePanel";
+import {
+  normalizeStudyGoal,
+  buildDailyGoalTasks,
+} from "./studyGoalEngine";
 import "./styles.css";
 
 /*
@@ -894,6 +900,8 @@ function App() {
   const [fixedSchedules, setFixedSchedules] =
     useState([]);
 
+  const [studyGoals, setStudyGoals] = useState([]);
+
   const [settings, setSettings] = useState(
     DEFAULT_SETTINGS
   );
@@ -1025,6 +1033,7 @@ function App() {
       const [
         tasksResult,
         fixedResult,
+        studyGoalsResult,
         settingsResult,
         profileResult,
         logsResult,
@@ -1047,6 +1056,12 @@ function App() {
           .order("start_time", {
             ascending: true,
           }),
+
+        supabase
+          .from("study_goals")
+          .select("*")
+          .eq("user_id", userId)
+          .order("deadline", { ascending: true }),
 
         supabase
           .from("study_settings")
@@ -1077,6 +1092,10 @@ function App() {
         console.error(fixedResult.error);
       }
 
+      if (studyGoalsResult.error) {
+        console.error(studyGoalsResult.error);
+      }
+
       if (settingsResult.error) {
         console.error(settingsResult.error);
       }
@@ -1099,6 +1118,16 @@ function App() {
       const remoteFixed =
         fixedResult.data?.map((schedule) =>
           normalizeFixedSchedule(schedule, userId)
+        ) || [];
+
+      const remoteStudyGoals =
+        studyGoalsResult.data?.map((goal) =>
+          normalizeStudyGoal(goal, userId)
+        ) || [];
+
+      const localStudyGoals =
+        local?.studyGoals?.map((goal) =>
+          normalizeStudyGoal(goal, userId)
         ) || [];
 
       const remoteSettings = normalizeSettings(
@@ -1131,6 +1160,11 @@ function App() {
           local.settings
         );
 
+        const localGoals =
+          local?.studyGoals?.map((goal) =>
+            normalizeStudyGoal(goal, userId)
+          ) || [];
+
         await supabase.from("tasks").insert(
           localTasks.map((task) => ({
             id: task.id,
@@ -1144,6 +1178,25 @@ function App() {
             studied_minutes: task.studied_minutes,
           }))
         );
+
+        if (localGoals.length) {
+          await supabase
+            .from("study_goals")
+            .insert(
+              localGoals.map((goal) => ({
+                id: goal.id,
+                user_id: userId,
+                title: goal.title,
+                subject: goal.subject,
+                total_pages: goal.total_pages,
+                current_page: goal.current_page,
+                deadline: goal.deadline,
+                minutes_per_page: goal.minutes_per_page,
+                priority: goal.priority,
+                is_active: true,
+              }))
+            );
+        }
 
         if (localFixed.length) {
           await supabase
@@ -1187,6 +1240,7 @@ function App() {
 
         setTasks(localTasks);
         setFixedSchedules(localFixed);
+        setStudyGoals(localGoals);
         setSettings(localSettings);
         setSettingsForm(localSettings);
       } else {
@@ -1244,6 +1298,11 @@ function App() {
 
         setTasks(nextTasks);
         setFixedSchedules(nextFixed);
+        setStudyGoals(
+          remoteStudyGoals.length > 0
+            ? remoteStudyGoals
+            : localStudyGoals
+        );
         setSettings(nextSettings);
         setSettingsForm(nextSettings);
       }
@@ -1303,6 +1362,10 @@ function App() {
             ? remoteFixed
             : fixedSchedules,
         settings: remoteSettings,
+        studyGoals:
+          remoteStudyGoals.length > 0
+            ? remoteStudyGoals
+            : localStudyGoals,
       });
     } catch (error) {
       console.error(error);
@@ -1320,6 +1383,7 @@ function App() {
     } else {
       setTasks([]);
       setFixedSchedules([]);
+      setStudyGoals([]);
       setStudyLogs([]);
     }
   }, [session, loadData]);
@@ -1337,11 +1401,13 @@ function App() {
       tasks,
       fixedSchedules,
       settings,
+      studyGoals,
     });
   }, [
     tasks,
     fixedSchedules,
     settings,
+    studyGoals,
     session,
   ]);
 
@@ -1876,29 +1942,231 @@ function App() {
 
   /*
   ================================================
+  参考書・学習目標 CRUD
+  ================================================
+  */
+
+  const createStudyGoal = async (payload) => {
+    const userId = session?.user?.id;
+    if (!userId) {
+      setMessage("ログインが必要です。");
+      return;
+    }
+
+    const goal = normalizeStudyGoal(
+      {
+        id: createId(),
+        user_id: userId,
+        ...payload,
+      },
+      userId
+    );
+
+    setStudyGoals((current) => [...current, goal]);
+
+    const { error } = await supabase
+      .from("study_goals")
+      .insert({
+        id: goal.id,
+        user_id: userId,
+        title: goal.title,
+        subject: goal.subject,
+        total_pages: goal.total_pages,
+        current_page: goal.current_page,
+        deadline: goal.deadline,
+        minutes_per_page: goal.minutes_per_page,
+        priority: goal.priority,
+        is_active: true,
+      });
+
+    if (error) {
+      console.error(error);
+      setStudyGoals((current) =>
+        current.filter((item) => item.id !== goal.id)
+      );
+      setMessage("参考書の登録に失敗しました。");
+      return;
+    }
+
+    setMessage("参考書を登録しました。毎日のページ目標を自動計算します。");
+  };
+
+  const updateStudyGoal = async (goalId, payload) => {
+    const userId = session?.user?.id;
+    if (!userId) return;
+
+    const oldGoal = studyGoals.find((goal) => goal.id === goalId);
+    if (!oldGoal) return;
+
+    const nextGoal = normalizeStudyGoal(
+      {
+        ...oldGoal,
+        ...payload,
+        id: goalId,
+        user_id: userId,
+      },
+      userId
+    );
+
+    setStudyGoals((current) =>
+      current.map((goal) =>
+        goal.id === goalId ? nextGoal : goal
+      )
+    );
+
+    const { error } = await supabase
+      .from("study_goals")
+      .update({
+        title: nextGoal.title,
+        subject: nextGoal.subject,
+        total_pages: nextGoal.total_pages,
+        current_page: nextGoal.current_page,
+        deadline: nextGoal.deadline,
+        minutes_per_page: nextGoal.minutes_per_page,
+        priority: nextGoal.priority,
+        is_active: nextGoal.current_page < nextGoal.total_pages,
+        completed_at:
+          nextGoal.current_page >= nextGoal.total_pages
+            ? new Date().toISOString()
+            : null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", goalId)
+      .eq("user_id", userId);
+
+    if (error) {
+      console.error(error);
+      setStudyGoals((current) =>
+        current.map((goal) =>
+          goal.id === goalId ? oldGoal : goal
+        )
+      );
+      setMessage("参考書の更新に失敗しました。");
+      return;
+    }
+
+    setMessage("参考書の進捗を更新しました。");
+  };
+
+  const completeStudyGoalToday = async (goalId, page) => {
+    const goal = studyGoals.find((item) => item.id === goalId);
+    if (!goal) return;
+
+    const nextPage = Math.min(
+      Number(goal.total_pages),
+      Math.max(Number(goal.current_page), Number(page) || 0)
+    );
+
+    await updateStudyGoal(goalId, {
+      current_page: nextPage,
+    });
+  };
+
+  const deleteStudyGoal = async (goalId) => {
+    if (!window.confirm("この参考書の目標を削除しますか？")) return;
+
+    setStudyGoals((current) =>
+      current.filter((goal) => goal.id !== goalId)
+    );
+
+    if (session?.user?.id) {
+      const { error } = await supabase
+        .from("study_goals")
+        .delete()
+        .eq("id", goalId)
+        .eq("user_id", session.user.id);
+
+      if (error) {
+        console.error(error);
+        setMessage("参考書の削除に失敗しました。");
+        await loadData();
+        return;
+      }
+    }
+
+    setMessage("参考書を削除しました。");
+  };
+
+  const createScheduleFromPanel = async (payload) => {
+    const schedule = normalizeFixedSchedule(
+      {
+        id: createId(),
+        user_id: session?.user?.id,
+        ...payload,
+      },
+      session?.user?.id
+    );
+
+    setFixedSchedules((current) => [...current, schedule]);
+
+    if (session?.user?.id) {
+      const { error } = await supabase
+        .from("fixed_schedules")
+        .insert({
+          id: schedule.id,
+          user_id: session.user.id,
+          title: schedule.title,
+          category: schedule.category,
+          start_time: schedule.start_time,
+          end_time: schedule.end_time,
+          repeat_type: schedule.repeat_type,
+          schedule_date: schedule.schedule_date,
+        });
+
+      if (error) {
+        console.error(error);
+        setFixedSchedules((current) =>
+          current.filter((item) => item.id !== schedule.id)
+        );
+        setMessage("予定の登録に失敗しました。");
+        return;
+      }
+    }
+
+    setMessage("予定を追加しました。自動計画がこの時間を避けて再計算されます。");
+  };
+
+  /*
+  ================================================
   自動計画
   ================================================
   */
+
+  const dailyGoalTasks = useMemo(
+    () =>
+      buildDailyGoalTasks(
+        studyGoals.filter((goal) => goal.is_active !== false),
+        selectedDate
+      ),
+    [studyGoals, selectedDate]
+  );
+
+  const planningTasks = useMemo(
+    () => [
+      ...tasks.filter((task) => task.task_date === selectedDate),
+      ...dailyGoalTasks,
+    ],
+    [tasks, dailyGoalTasks, selectedDate]
+  );
 
   const planData = useMemo(
     () =>
       generatePlan({
         dateString: selectedDate,
-        tasks,
+        tasks: planningTasks,
         settings,
         fixedSchedules,
       }),
     [
       selectedDate,
-      tasks,
+      planningTasks,
       settings,
       fixedSchedules,
     ]
   );
-
   useEffect(() => {
     setAiAdoptedPlan(null);
-  }, [selectedDate, tasks, settings, fixedSchedules]);
+  }, [selectedDate, tasks, studyGoals, settings, fixedSchedules]);
 /*
 ================================================
 Gemini AI plan
@@ -1934,7 +2202,7 @@ const handleAdoptAIPlan = useCallback(
           return null;
         }
 
-        const matchedTask = tasks.find(
+        const matchedTask = planningTasks.find(
           (task) => {
             if (item.taskId) {
               return task.id === item.taskId;
@@ -1997,7 +2265,7 @@ const handleAdoptAIPlan = useCallback(
       "Gemini AIの学習計画を採用しました。"
     );
   },
-  [tasks]
+  [planningTasks]
 );
 
   /*
@@ -2228,6 +2496,7 @@ const handleAdoptAIPlan = useCallback(
     setSession(null);
     setTasks([]);
     setFixedSchedules([]);
+    setStudyGoals([]);
     setStudyLogs([]);
     setTimerRunning(false);
     setTimerSeconds(0);
@@ -2320,6 +2589,34 @@ const handleAdoptAIPlan = useCallback(
           >
             <span>✦</span>
             自動計画
+          </button>
+
+          <button
+            className={
+              activeTab === "goals"
+                ? "nav-button active"
+                : "nav-button"
+            }
+            onClick={() =>
+              setActiveTab("goals")
+            }
+          >
+            <span>▣</span>
+            参考書
+          </button>
+
+          <button
+            className={
+              activeTab === "schedules"
+                ? "nav-button active"
+                : "nav-button"
+            }
+            onClick={() =>
+              setActiveTab("schedules")
+            }
+          >
+            <span>◷</span>
+            予定・時間
           </button>
 
           <button
@@ -2512,10 +2809,7 @@ const handleAdoptAIPlan = useCallback(
               <div className="content-grid">
                 <AIPlanPanel
   date={selectedDate}
-  tasks={tasks.filter(
-    (task) =>
-      task.task_date === selectedDate
-  )}
+  tasks={planningTasks}
   fixedSchedules={selectedFixedSchedules}
   settings={settings}
   currentPlan={planData.plan}
@@ -2912,6 +3206,13 @@ const handleAdoptAIPlan = useCallback(
                           自動計画から除外されます
                         </p>
                       </div>
+                      <button
+                        type="button"
+                        className="secondary-button small"
+                        onClick={() => setActiveTab("schedules")}
+                      >
+                        予定を管理
+                      </button>
                     </div>
 
                     <form
@@ -3296,15 +3597,16 @@ const handleAdoptAIPlan = useCallback(
                         <button
                           className="secondary-button small"
                           onClick={() => {
-                            setTimerTaskId(
-                              item.taskId
-                            );
-                            setActiveTab(
-                              "today"
-                            );
+                            if (item.goalId) {
+                              setActiveTab("goals");
+                              return;
+                            }
+
+                            setTimerTaskId(item.taskId);
+                            setActiveTab("today");
                           }}
                         >
-                          ▶ 開始
+                          {item.goalId ? "参考書を開く" : "▶ 開始"}
                         </button>
                       </div>
                     )
@@ -3357,6 +3659,27 @@ const handleAdoptAIPlan = useCallback(
           CALENDAR
           ========================================
           */}
+
+          {activeTab === "goals" && (
+            <StudyGoalPanel
+              goals={studyGoals}
+              selectedDate={selectedDate}
+              subjects={SUBJECTS}
+              onCreate={createStudyGoal}
+              onUpdate={updateStudyGoal}
+              onDelete={deleteStudyGoal}
+              onCompleteToday={completeStudyGoalToday}
+            />
+          )}
+
+          {activeTab === "schedules" && (
+            <SchedulePanel
+              selectedDate={selectedDate}
+              schedules={selectedFixedSchedules}
+              onCreate={createScheduleFromPanel}
+              onDelete={deleteFixedSchedule}
+            />
+          )}
 
           {activeTab === "calendar" && (
             <>
