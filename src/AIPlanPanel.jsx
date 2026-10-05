@@ -1,7 +1,7 @@
 ```jsx
 import React, { useMemo } from "react";
 
-export default function AIPlanPanel({
+export default function AIPlanPanel() {
   date,
   tasks = [],
   fixedSchedules = [],
