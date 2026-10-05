@@ -2359,3 +2359,93 @@ label select {
     grid-template-columns: repeat(2, 1fr);
   }
 }
+/* =========================================
+   Layout balance fix
+========================================= */
+
+/* 自動計画カードの無駄な縦余白を削減 */
+.plan-list {
+  margin-top: 4px;
+}
+
+.plan-item {
+  min-height: 0;
+  padding: 14px 0;
+}
+
+.form-actions {
+  margin-top: 10px;
+  margin-bottom: 10px !important;
+}
+
+/* 空き時間・予定フォームをコンパクトに */
+.compact-form {
+  gap: 8px;
+}
+
+.compact-form .form-row {
+  gap: 12px;
+  margin-bottom: 0;
+}
+
+/* 学習ログ：中身が少ないときに間延びさせない */
+.log-list {
+  min-height: 0;
+}
+
+.log-list .muted {
+  margin: 0;
+  padding: 20px 2px;
+}
+
+/* =========================================
+   自動計画条件
+========================================= */
+
+.condition-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.condition-grid > div {
+  min-width: 0;
+  padding: 16px;
+}
+
+.condition-grid strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* =========================================
+   Responsive balance
+========================================= */
+
+@media (max-width: 1100px) {
+  .condition-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .condition-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 9px;
+  }
+
+  .condition-grid > div {
+    padding: 13px;
+  }
+
+  .compact-form {
+    gap: 7px;
+  }
+}
+
+@media (max-width: 480px) {
+  .condition-grid {
+    grid-template-columns: 1fr;
+  }
+}
