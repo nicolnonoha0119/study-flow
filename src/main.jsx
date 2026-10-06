@@ -1064,6 +1064,16 @@ function App() {
 
   const [studyLogs, setStudyLogs] = useState([]);
 
+  const [studySessions, setStudySessions] = useState([]);
+
+  const [manualLogForm, setManualLogForm] = useState({
+    study_date: todayString(),
+    subject: "数学",
+    minutes: 30,
+    title: "",
+    task_id: "",
+  });
+
   const [loadingData, setLoadingData] = useState(false);
 
   const [activeTab, setActiveTab] = useState("today");
@@ -1188,6 +1198,7 @@ function App() {
         settingsResult,
         profileResult,
         logsResult,
+        sessionsResult,
       ] = await Promise.all([
         supabase
           .from("tasks")
@@ -1227,6 +1238,13 @@ function App() {
           .order("study_date", {
             ascending: true,
           }),
+
+        supabase
+          .from("study_sessions")
+          .select("*")
+          .eq("user_id", userId)
+          .order("study_date", { ascending: false })
+          .order("created_at", { ascending: false }),
       ]);
 
       if (tasksResult.error) {
@@ -1247,6 +1265,10 @@ function App() {
 
       if (logsResult.error) {
         console.error(logsResult.error);
+      }
+
+      if (sessionsResult.error) {
+        console.error(sessionsResult.error);
       }
 
       const local = getLocalData();
@@ -1448,6 +1470,7 @@ function App() {
       );
 
       setStudyLogs(logsResult.data || []);
+      setStudySessions(sessionsResult.data || []);
 
       /*
        localStorageにもミラー
@@ -1481,6 +1504,7 @@ function App() {
       setTasks([]);
       setFixedSchedules([]);
       setStudyLogs([]);
+      setStudySessions([]);
     }
   }, [session, loadData]);
 
@@ -1540,6 +1564,153 @@ function App() {
     )}`;
   }, [timerSeconds]);
 
+  const recordStudySession = async ({
+    taskId = null,
+    subject,
+    title,
+    studyDate,
+    minutes,
+    source = "manual",
+  }) => {
+    const safeMinutes = Math.max(1, Math.round(Number(minutes) || 0));
+    if (!safeMinutes || !studyDate || !subject) return false;
+
+    const sessionId = createId();
+    const userId = session?.user?.id;
+    const newSession = {
+      id: sessionId,
+      user_id: userId,
+      task_id: taskId || null,
+      subject,
+      title: title?.trim() || "学習",
+      study_date: studyDate,
+      minutes: safeMinutes,
+      source,
+      created_at: new Date().toISOString(),
+    };
+
+    if (userId) {
+      const { error: sessionError } = await supabase
+        .from("study_sessions")
+        .insert(newSession);
+
+      if (sessionError) {
+        console.error("study_sessions 保存エラー:", sessionError);
+        setMessage(`学習記録の保存に失敗しました: ${sessionError.message}`);
+        return false;
+      }
+
+      const existing = studyLogs.find(
+        (log) => log.study_date === studyDate
+      );
+      const nextLogMinutes =
+        Number(existing?.minutes || 0) + safeMinutes;
+
+      const { data: logData, error: logError } = await supabase
+        .from("study_logs")
+        .upsert(
+          {
+            user_id: userId,
+            study_date: studyDate,
+            minutes: nextLogMinutes,
+          },
+          { onConflict: "user_id,study_date" }
+        )
+        .select()
+        .maybeSingle();
+
+      if (logError) {
+        console.error("study_logs 保存エラー:", logError);
+        setMessage(`学習時間の集計に失敗しました: ${logError.message}`);
+        return false;
+      }
+
+      if (logData) {
+        setStudyLogs((current) => {
+          const exists = current.some((log) => log.study_date === studyDate);
+          return exists
+            ? current.map((log) => log.study_date === studyDate ? logData : log)
+            : [...current, logData];
+        });
+      }
+
+      setStudySessions((current) => [newSession, ...current]);
+      return true;
+    }
+
+    setStudySessions((current) => [newSession, ...current]);
+    setStudyLogs((current) => {
+      const existing = current.find((log) => log.study_date === studyDate);
+      if (existing) {
+        return current.map((log) =>
+          log.study_date === studyDate
+            ? { ...log, minutes: Number(log.minutes || 0) + safeMinutes }
+            : log
+        );
+      }
+      return [...current, { id: createId(), study_date: studyDate, minutes: safeMinutes }];
+    });
+    return true;
+  };
+
+  const saveManualStudyLog = async (event) => {
+    event.preventDefault();
+
+    const task = tasks.find((item) => item.id === manualLogForm.task_id);
+    const subject = task?.subject || manualLogForm.subject;
+    const title = manualLogForm.title.trim() || task?.title || "学習";
+    const minutes = Number(manualLogForm.minutes);
+
+    if (!manualLogForm.study_date || !Number.isFinite(minutes) || minutes <= 0) {
+      setMessage("日付と学習時間を正しく入力してください。");
+      return;
+    }
+
+    const saved = await recordStudySession({
+      taskId: task?.id || null,
+      subject,
+      title,
+      studyDate: manualLogForm.study_date,
+      minutes,
+      source: "manual",
+    });
+
+    if (saved) {
+      if (task && session?.user?.id) {
+        const nextStudied = Number(task.studied_minutes || 0) + Number(minutes);
+        const nextCompleted = nextStudied >= Number(task.minutes || 0);
+
+        setTasks((current) => current.map((item) =>
+          item.id === task.id
+            ? { ...item, studied_minutes: nextStudied, completed: nextCompleted }
+            : item
+        ));
+
+        const { error: taskError } = await supabase
+          .from("tasks")
+          .update({
+            studied_minutes: nextStudied,
+            completed: nextCompleted,
+          })
+          .eq("id", task.id)
+          .eq("user_id", session.user.id);
+
+        if (taskError) {
+          console.error("手動記録のタスク反映エラー:", taskError);
+        }
+      }
+
+      setManualLogForm({
+        study_date: manualLogForm.study_date,
+        subject: "数学",
+        minutes: 30,
+        title: "",
+        task_id: "",
+      });
+      setMessage(`${formatMinutes(minutes)}の学習時間を記録しました。`);
+    }
+  };
+
   const saveTimerSession = async () => {
     if (!timerTaskId || timerSeconds <= 0) {
       setTimerRunning(false);
@@ -1582,7 +1753,7 @@ function App() {
     );
 
     if (session?.user?.id) {
-      await supabase
+      const { error } = await supabase
         .from("tasks")
         .update({
           studied_minutes: nextStudied,
@@ -1591,55 +1762,23 @@ function App() {
         .eq("id", task.id)
         .eq("user_id", session.user.id);
 
-      /*
-       study_logsを更新
-      */
-
-      const today = todayString();
-
-      const existing = studyLogs.find(
-        (log) => log.study_date === today
-      );
-
-      const nextLogMinutes =
-        Number(existing?.minutes || 0) +
-        studiedMinutes;
-
-      const { data } = await supabase
-        .from("study_logs")
-        .upsert(
-          {
-            user_id: session.user.id,
-            study_date: today,
-            minutes: nextLogMinutes,
-          },
-          {
-            onConflict:
-              "user_id,study_date",
-          }
-        )
-        .select()
-        .maybeSingle();
-
-      if (data) {
-        setStudyLogs((current) => {
-          const exists = current.some(
-            (log) =>
-              log.study_date === today
-          );
-
-          if (exists) {
-            return current.map((log) =>
-              log.study_date === today
-                ? data
-                : log
-            );
-          }
-
-          return [...current, data];
-        });
+      if (error) {
+        console.error("tasks 学習時間保存エラー:", error);
+        setMessage(`タスクへの学習時間保存に失敗しました: ${error.message}`);
+        return;
       }
     }
+
+    const saved = await recordStudySession({
+      taskId: task.id,
+      subject: task.subject,
+      title: task.title,
+      studyDate: todayString(),
+      minutes: studiedMinutes,
+      source: "timer",
+    });
+
+    if (!saved) return;
 
     setTimerSeconds(0);
     setTimerRunning(false);
@@ -1975,51 +2114,35 @@ const saveSettings = async (event) => {
   }
 
   const nextSettings = normalizeSettings(settingsForm);
-
   setSettings(nextSettings);
 
   if (session?.user?.id) {
     const payload = {
       user_id: session.user.id,
       wake_up_time: nextSettings.wakeUpTime,
-      morning_prep_minutes: Number(
-        nextSettings.morningPrepMinutes
-      ),
-      use_study_room: Boolean(
-        nextSettings.useStudyRoom
-      ),
-      travel_minutes: Number(
-        nextSettings.travelMinutes
-      ),
+      morning_prep_minutes: Number(nextSettings.morningPrepMinutes),
+      use_study_room: Boolean(nextSettings.useStudyRoom),
+      travel_minutes: Number(nextSettings.travelMinutes),
       study_start: nextSettings.studyStart,
       study_end: nextSettings.studyEnd,
-      default_task_minutes: Number(
-        nextSettings.defaultTaskMinutes
-      ),
+      default_task_minutes: Number(nextSettings.defaultTaskMinutes),
     };
 
     const { error } = await supabase
       .from("study_settings")
-      .upsert(payload, {
-        onConflict: "user_id",
-      });
+      .upsert(payload, { onConflict: "user_id" });
 
     if (error) {
-      console.error(
-        "study_settings 保存エラー:",
-        error
-      );
-
-      setMessage(
-        `設定保存に失敗しました: ${error.message}`
-      );
-
+      console.error("study_settings 保存エラー:", error);
+      setMessage(`設定保存に失敗しました: ${error.message}`);
       return;
     }
   }
 
   setMessage("設定を保存しました。");
 };
+
+ 
 
   const saveNickname = async (event) => {
     event.preventDefault();
@@ -2470,6 +2593,7 @@ const handleAdoptAIPlan = useCallback(
     setTasks([]);
     setFixedSchedules([]);
     setStudyLogs([]);
+    setStudySessions([]);
     setTimerRunning(false);
     setTimerSeconds(0);
   };
@@ -3955,6 +4079,85 @@ const handleAdoptAIPlan = useCallback(
               <section className="card">
                 <div className="section-header">
                   <div>
+                    <h2>あとから学習時間を記録</h2>
+                    <p>タイマーを使わなかった勉強も、あとから追加できます。</p>
+                  </div>
+                </div>
+
+                <form className="settings-form" onSubmit={saveManualStudyLog}>
+                  <div className="form-row">
+                    <label>
+                      日付
+                      <input
+                        type="date"
+                        value={manualLogForm.study_date}
+                        onChange={(e) => setManualLogForm((current) => ({ ...current, study_date: e.target.value }))}
+                      />
+                    </label>
+                    <label>
+                      科目
+                      <select
+                        value={manualLogForm.subject}
+                        onChange={(e) => setManualLogForm((current) => ({ ...current, subject: e.target.value }))}
+                      >
+                        {SUBJECTS.map((subject) => (
+                          <option key={subject} value={subject}>{subject}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      学習時間（分）
+                      <input
+                        type="number"
+                        min="1"
+                        value={manualLogForm.minutes}
+                        onChange={(e) => setManualLogForm((current) => ({ ...current, minutes: e.target.value }))}
+                      />
+                    </label>
+                  </div>
+
+                  <div className="form-row">
+                    <label className="wide">
+                      関連タスク（任意）
+                      <select
+                        value={manualLogForm.task_id}
+                        onChange={(e) => {
+                          const task = tasks.find((item) => item.id === e.target.value);
+                          setManualLogForm((current) => ({
+                            ...current,
+                            task_id: e.target.value,
+                            subject: task?.subject || current.subject,
+                            title: task?.title || current.title,
+                          }));
+                        }}
+                      >
+                        <option value="">タスクを選択しない</option>
+                        {tasks.slice().sort((a, b) => a.task_date.localeCompare(b.task_date)).map((task) => (
+                          <option key={task.id} value={task.id}>
+                            {task.task_date}｜{task.subject}：{task.title}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="wide">
+                      学習内容（任意）
+                      <input
+                        value={manualLogForm.title}
+                        onChange={(e) => setManualLogForm((current) => ({ ...current, title: e.target.value }))}
+                        placeholder="例：数学の問題演習"
+                      />
+                    </label>
+                  </div>
+
+                  <div className="form-actions">
+                    <button className="primary-button" type="submit">学習時間を記録</button>
+                  </div>
+                </form>
+              </section>
+
+              <section className="card">
+                <div className="section-header">
+                  <div>
                     <h2>学習ログ</h2>
                     <p>
                       今月の記録
@@ -3991,13 +4194,26 @@ const handleAdoptAIPlan = useCallback(
                       </div>
                     ))}
 
-                  {studyLogs.length ===
-                    0 && (
-                    <p className="muted">
-                      学習ログはまだありません。
-                    </p>
+                  {studyLogs.length === 0 && studySessions.length === 0 && (
+                    <p className="muted">学習ログはまだありません。</p>
                   )}
                 </div>
+
+                {studySessions.length > 0 && (
+                  <div className="log-list" style={{ marginTop: "16px" }}>
+                    {studySessions.slice(0, 20).map((item) => (
+                      <div className="log-item" key={item.id}>
+                        <span>
+                          {formatDateJP(item.study_date)} ・ {item.subject} ・ {item.title}
+                          <small style={{ marginLeft: "8px" }}>
+                            {item.source === "timer" ? "タイマー" : "手動記録"}
+                          </small>
+                        </span>
+                        <strong>{formatMinutes(item.minutes)}</strong>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </section>
             </>
           )}
