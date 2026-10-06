@@ -497,6 +497,8 @@ function generatePlan({
   tasks,
   settings,
   fixedSchedules,
+  eligibleTaskIds = null,
+  maxSubjectsPerDay = 3,
 }) {
   const slots = getFreeSlots(
     dateString,
@@ -521,13 +523,15 @@ function generatePlan({
    ・優先度 → 残り時間の順で、その日の中心科目を決める
    ・選んだ科目を終えたら、次の科目を補充する
   */
-  const MAX_SUBJECTS_PER_DAY = 3;
+  const MAX_SUBJECTS_PER_DAY = Math.max(1, Number(maxSubjectsPerDay) || 3);
   const TARGET_BLOCK_MINUTES = 90;
 
   const targets = tasks
     .filter(
       (task) =>
-        task.task_date === dateString &&
+        (eligibleTaskIds === null
+          ? task.task_date === dateString
+          : eligibleTaskIds.includes(task.id)) &&
         !task.completed
     )
     .map((task) => ({
@@ -1064,33 +1068,17 @@ function App() {
 
   const [studyLogs, setStudyLogs] = useState([]);
 
-  const [studySessions, setStudySessions] = useState([]);
-
-  const [studyGoals, setStudyGoals] = useState([]);
-
-  const [goalForm, setGoalForm] = useState({
-    title: "",
-    subject: "数学",
-    total_pages: 100,
-    current_page: 0,
-    deadline: todayString(),
-    minutes_per_page: 3,
-    priority: 3,
-  });
-
-  const [editingGoalId, setEditingGoalId] = useState(null);
-
-  const [manualLogForm, setManualLogForm] = useState({
-    study_date: todayString(),
-    subject: "数学",
-    minutes: 30,
-    title: "",
-    task_id: "",
-  });
-
   const [loadingData, setLoadingData] = useState(false);
 
   const [activeTab, setActiveTab] = useState("today");
+
+  const [planningStep, setPlanningStep] = useState(1);
+  const [planningMode, setPlanningMode] = useState("standard");
+  const [planningTaskIds, setPlanningTaskIds] = useState([]);
+  const [planningWindow, setPlanningWindow] = useState({
+    start: DEFAULT_SETTINGS.studyStart,
+    end: DEFAULT_SETTINGS.studyEnd,
+  });
 
   const [selectedDate, setSelectedDate] =
     useState(todayString());
@@ -1212,8 +1200,6 @@ function App() {
         settingsResult,
         profileResult,
         logsResult,
-        sessionsResult,
-        goalsResult,
       ] = await Promise.all([
         supabase
           .from("tasks")
@@ -1253,20 +1239,6 @@ function App() {
           .order("study_date", {
             ascending: true,
           }),
-
-        supabase
-          .from("study_sessions")
-          .select("*")
-          .eq("user_id", userId)
-          .order("study_date", { ascending: false })
-          .order("created_at", { ascending: false }),
-
-        supabase
-          .from("study_goals")
-          .select("*")
-          .eq("user_id", userId)
-          .order("deadline", { ascending: true })
-          .order("priority", { ascending: false }),
       ]);
 
       if (tasksResult.error) {
@@ -1287,14 +1259,6 @@ function App() {
 
       if (logsResult.error) {
         console.error(logsResult.error);
-      }
-
-      if (sessionsResult.error) {
-        console.error(sessionsResult.error);
-      }
-
-      if (goalsResult.error) {
-        console.error(goalsResult.error);
       }
 
       const local = getLocalData();
@@ -1496,8 +1460,6 @@ function App() {
       );
 
       setStudyLogs(logsResult.data || []);
-      setStudySessions(sessionsResult.data || []);
-      setStudyGoals(goalsResult.data || []);
 
       /*
        localStorageにもミラー
@@ -1531,7 +1493,6 @@ function App() {
       setTasks([]);
       setFixedSchedules([]);
       setStudyLogs([]);
-      setStudySessions([]);
     }
   }, [session, loadData]);
 
@@ -1591,290 +1552,6 @@ function App() {
     )}`;
   }, [timerSeconds]);
 
-  const recordStudySession = async ({
-    taskId = null,
-    subject,
-    title,
-    studyDate,
-    minutes,
-    source = "manual",
-  }) => {
-    const safeMinutes = Math.max(1, Math.round(Number(minutes) || 0));
-    if (!safeMinutes || !studyDate || !subject) {
-      setMessage("日付・科目・学習時間を確認してください。");
-      return false;
-    }
-
-    const userId = session?.user?.id;
-    const sessionId = createId();
-    const newSession = {
-      id: sessionId,
-      user_id: userId,
-      task_id: taskId || null,
-      subject,
-      title: title?.trim() || "学習",
-      study_date: studyDate,
-      minutes: safeMinutes,
-      source,
-      created_at: new Date().toISOString(),
-    };
-
-    /*
-     * まず日別の学習時間を保存します。
-     * 詳細ログ用のstudy_sessionsが未作成でも、
-     * 学習時間そのものは記録できるようにしています。
-     */
-    if (userId) {
-      const existing = studyLogs.find(
-        (log) => log.study_date === studyDate
-      );
-      const nextLogMinutes =
-        Number(existing?.minutes || 0) + safeMinutes;
-
-      const { data: logData, error: logError } = await supabase
-        .from("study_logs")
-        .upsert(
-          {
-            user_id: userId,
-            study_date: studyDate,
-            minutes: nextLogMinutes,
-          },
-          { onConflict: "user_id,study_date" }
-        )
-        .select()
-        .maybeSingle();
-
-      if (logError) {
-        console.error("study_logs 保存エラー:", logError);
-        setMessage(`学習時間の保存に失敗しました: ${logError.message}`);
-        return false;
-      }
-
-      if (logData) {
-        setStudyLogs((current) => {
-          const exists = current.some((log) => log.study_date === studyDate);
-          return exists
-            ? current.map((log) =>
-                log.study_date === studyDate ? logData : log
-              )
-            : [...current, logData];
-        });
-      }
-
-      /*
-       * 詳細ログ。study_sessionsテーブルがあれば保存します。
-       * テーブル未作成の場合でも日別記録は成功扱いにします。
-       */
-      const { error: sessionError } = await supabase
-        .from("study_sessions")
-        .insert(newSession);
-
-      if (sessionError) {
-        console.warn("study_sessions 詳細ログを保存できませんでした:", sessionError.message);
-      } else {
-        setStudySessions((current) => [newSession, ...current]);
-      }
-
-      return true;
-    }
-
-    /* 未ログイン時のローカル表示用 */
-    setStudySessions((current) => [newSession, ...current]);
-    setStudyLogs((current) => {
-      const existing = current.find((log) => log.study_date === studyDate);
-      if (existing) {
-        return current.map((log) =>
-          log.study_date === studyDate
-            ? { ...log, minutes: Number(log.minutes || 0) + safeMinutes }
-            : log
-        );
-      }
-      return [
-        ...current,
-        { id: createId(), study_date: studyDate, minutes: safeMinutes },
-      ];
-    });
-    return true;
-  };
-
-  const saveManualStudyLog = async (event) => {
-    event.preventDefault();
-
-    const task = tasks.find((item) => item.id === manualLogForm.task_id);
-    const subject = task?.subject || manualLogForm.subject;
-    const title = manualLogForm.title.trim() || task?.title || "学習";
-    const minutes = Number(manualLogForm.minutes);
-
-    if (!manualLogForm.study_date || !Number.isFinite(minutes) || minutes <= 0) {
-      setMessage("日付と学習時間を正しく入力してください。");
-      return;
-    }
-
-    const saved = await recordStudySession({
-      taskId: task?.id || null,
-      subject,
-      title,
-      studyDate: manualLogForm.study_date,
-      minutes,
-      source: "manual",
-    });
-
-    if (saved) {
-      if (task && session?.user?.id) {
-        const nextStudied = Number(task.studied_minutes || 0) + Number(minutes);
-        const nextCompleted = nextStudied >= Number(task.minutes || 0);
-
-        setTasks((current) => current.map((item) =>
-          item.id === task.id
-            ? { ...item, studied_minutes: nextStudied, completed: nextCompleted }
-            : item
-        ));
-
-        const { error: taskError } = await supabase
-          .from("tasks")
-          .update({
-            studied_minutes: nextStudied,
-            completed: nextCompleted,
-          })
-          .eq("id", task.id)
-          .eq("user_id", session.user.id);
-
-        if (taskError) {
-          console.error("手動記録のタスク反映エラー:", taskError);
-        }
-      }
-
-      setManualLogForm({
-        study_date: manualLogForm.study_date,
-        subject: "数学",
-        minutes: 30,
-        title: "",
-        task_id: "",
-      });
-      setMessage(`${formatMinutes(minutes)}の学習時間を記録しました。`);
-    }
-  };
-
-  const deleteStudySession = async (item) => {
-    if (!item?.id) return;
-
-    const confirmed = window.confirm(
-      `${formatDateJP(item.study_date)}の「${item.subject}・${item.title}」${formatMinutes(item.minutes)}を削除しますか？`
-    );
-
-    if (!confirmed) return;
-
-    const userId = session?.user?.id;
-    const deleteMinutes = Math.max(0, Number(item.minutes) || 0);
-
-    if (userId) {
-      const { error: sessionError } = await supabase
-        .from("study_sessions")
-        .delete()
-        .eq("id", item.id)
-        .eq("user_id", userId);
-
-      if (sessionError) {
-        console.error("study_sessions 削除エラー:", sessionError);
-        setMessage(`学習記録の削除に失敗しました: ${sessionError.message}`);
-        return;
-      }
-
-      const currentLog = studyLogs.find(
-        (log) => log.study_date === item.study_date
-      );
-      const nextLogMinutes = Math.max(
-        0,
-        Number(currentLog?.minutes || 0) - deleteMinutes
-      );
-
-      if (currentLog) {
-        const { data: logData, error: logError } = await supabase
-          .from("study_logs")
-          .upsert(
-            {
-              user_id: userId,
-              study_date: item.study_date,
-              minutes: nextLogMinutes,
-            },
-            { onConflict: "user_id,study_date" }
-          )
-          .select()
-          .maybeSingle();
-
-        if (logError) {
-          console.error("study_logs 更新エラー:", logError);
-          setMessage(`学習時間の集計更新に失敗しました: ${logError.message}`);
-          return;
-        }
-
-        if (logData) {
-          setStudyLogs((current) =>
-            current.map((log) =>
-              log.study_date === item.study_date ? logData : log
-            )
-          );
-        }
-      }
-
-      if (item.task_id) {
-        const task = tasks.find((taskItem) => taskItem.id === item.task_id);
-
-        if (task) {
-          const nextStudiedMinutes = Math.max(
-            0,
-            Number(task.studied_minutes || 0) - deleteMinutes
-          );
-          const nextCompleted =
-            nextStudiedMinutes >= Number(task.minutes || 0);
-
-          const { error: taskError } = await supabase
-            .from("tasks")
-            .update({
-              studied_minutes: nextStudiedMinutes,
-              completed: nextCompleted,
-            })
-            .eq("id", task.id)
-            .eq("user_id", userId);
-
-          if (taskError) {
-            console.error("tasks 学習時間更新エラー:", taskError);
-            setMessage(`タスクの学習時間更新に失敗しました: ${taskError.message}`);
-            return;
-          }
-
-          setTasks((current) =>
-            current.map((taskItem) =>
-              taskItem.id === task.id
-                ? {
-                    ...taskItem,
-                    studied_minutes: nextStudiedMinutes,
-                    completed: nextCompleted,
-                  }
-                : taskItem
-            )
-          );
-        }
-      }
-    } else {
-      setStudyLogs((current) =>
-        current
-          .map((log) =>
-            log.study_date === item.study_date
-              ? { ...log, minutes: Math.max(0, Number(log.minutes || 0) - deleteMinutes) }
-              : log
-          )
-          .filter((log) => Number(log.minutes || 0) > 0)
-      );
-    }
-
-    setStudySessions((current) =>
-      current.filter((sessionItem) => sessionItem.id !== item.id)
-    );
-
-    setMessage("学習記録を削除しました。");
-  };
-
   const saveTimerSession = async () => {
     if (!timerTaskId || timerSeconds <= 0) {
       setTimerRunning(false);
@@ -1917,7 +1594,7 @@ function App() {
     );
 
     if (session?.user?.id) {
-      const { error } = await supabase
+      await supabase
         .from("tasks")
         .update({
           studied_minutes: nextStudied,
@@ -1926,23 +1603,55 @@ function App() {
         .eq("id", task.id)
         .eq("user_id", session.user.id);
 
-      if (error) {
-        console.error("tasks 学習時間保存エラー:", error);
-        setMessage(`タスクへの学習時間保存に失敗しました: ${error.message}`);
-        return;
+      /*
+       study_logsを更新
+      */
+
+      const today = todayString();
+
+      const existing = studyLogs.find(
+        (log) => log.study_date === today
+      );
+
+      const nextLogMinutes =
+        Number(existing?.minutes || 0) +
+        studiedMinutes;
+
+      const { data } = await supabase
+        .from("study_logs")
+        .upsert(
+          {
+            user_id: session.user.id,
+            study_date: today,
+            minutes: nextLogMinutes,
+          },
+          {
+            onConflict:
+              "user_id,study_date",
+          }
+        )
+        .select()
+        .maybeSingle();
+
+      if (data) {
+        setStudyLogs((current) => {
+          const exists = current.some(
+            (log) =>
+              log.study_date === today
+          );
+
+          if (exists) {
+            return current.map((log) =>
+              log.study_date === today
+                ? data
+                : log
+            );
+          }
+
+          return [...current, data];
+        });
       }
     }
-
-    const saved = await recordStudySession({
-      taskId: task.id,
-      subject: task.subject,
-      title: task.title,
-      studyDate: todayString(),
-      minutes: studiedMinutes,
-      source: "timer",
-    });
-
-    if (!saved) return;
 
     setTimerSeconds(0);
     setTimerRunning(false);
@@ -2278,35 +1987,51 @@ const saveSettings = async (event) => {
   }
 
   const nextSettings = normalizeSettings(settingsForm);
+
   setSettings(nextSettings);
 
   if (session?.user?.id) {
     const payload = {
       user_id: session.user.id,
       wake_up_time: nextSettings.wakeUpTime,
-      morning_prep_minutes: Number(nextSettings.morningPrepMinutes),
-      use_study_room: Boolean(nextSettings.useStudyRoom),
-      travel_minutes: Number(nextSettings.travelMinutes),
+      morning_prep_minutes: Number(
+        nextSettings.morningPrepMinutes
+      ),
+      use_study_room: Boolean(
+        nextSettings.useStudyRoom
+      ),
+      travel_minutes: Number(
+        nextSettings.travelMinutes
+      ),
       study_start: nextSettings.studyStart,
       study_end: nextSettings.studyEnd,
-      default_task_minutes: Number(nextSettings.defaultTaskMinutes),
+      default_task_minutes: Number(
+        nextSettings.defaultTaskMinutes
+      ),
     };
 
     const { error } = await supabase
       .from("study_settings")
-      .upsert(payload, { onConflict: "user_id" });
+      .upsert(payload, {
+        onConflict: "user_id",
+      });
 
     if (error) {
-      console.error("study_settings 保存エラー:", error);
-      setMessage(`設定保存に失敗しました: ${error.message}`);
+      console.error(
+        "study_settings 保存エラー:",
+        error
+      );
+
+      setMessage(
+        `設定保存に失敗しました: ${error.message}`
+      );
+
       return;
     }
   }
 
   setMessage("設定を保存しました。");
 };
-
- 
 
   const saveNickname = async (event) => {
     event.preventDefault();
@@ -2336,154 +2061,136 @@ const saveSettings = async (event) => {
 
   /*
   ================================================
-  参考書・ページ目標
-  ================================================
-  */
-
-  const resetGoalForm = () => {
-    setGoalForm({
-      title: "",
-      subject: "数学",
-      total_pages: 100,
-      current_page: 0,
-      deadline: todayString(),
-      minutes_per_page: 3,
-      priority: 3,
-    });
-    setEditingGoalId(null);
-  };
-
-  const saveStudyGoal = async (event) => {
-    event.preventDefault();
-
-    const title = goalForm.title.trim();
-    const totalPages = Math.max(1, Math.round(Number(goalForm.total_pages) || 0));
-    const currentPage = Math.min(totalPages, Math.max(0, Math.round(Number(goalForm.current_page) || 0)));
-    const minutesPerPage = Math.max(0.1, Number(goalForm.minutes_per_page) || 0);
-    const priority = Math.min(5, Math.max(1, Math.round(Number(goalForm.priority) || 3)));
-
-    if (!title || !goalForm.deadline) {
-      setMessage("参考書名と締切を入力してください。");
-      return;
-    }
-
-    const userId = session?.user?.id;
-    const completed = currentPage >= totalPages;
-    const payload = {
-      title,
-      subject: goalForm.subject,
-      total_pages: totalPages,
-      current_page: currentPage,
-      deadline: goalForm.deadline,
-      minutes_per_page: minutesPerPage,
-      priority,
-      is_active: !completed,
-      completed_at: completed ? new Date().toISOString() : null,
-    };
-
-    if (editingGoalId) {
-      setStudyGoals((current) => current.map((goal) =>
-        goal.id === editingGoalId ? { ...goal, ...payload } : goal
-      ));
-      if (userId) {
-        const { error } = await supabase
-          .from("study_goals")
-          .update(payload)
-          .eq("id", editingGoalId)
-          .eq("user_id", userId);
-        if (error) {
-          console.error("study_goals 更新エラー:", error);
-          setMessage(`参考書の更新に失敗しました: ${error.message}`);
-          return;
-        }
-      }
-      setMessage("参考書の進捗を更新しました。");
-    } else {
-      const newGoal = {
-        id: createId(),
-        user_id: userId,
-        ...payload,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      };
-      setStudyGoals((current) => [...current, newGoal]);
-      if (userId) {
-        const { data, error } = await supabase
-          .from("study_goals")
-          .insert(newGoal)
-          .select()
-          .maybeSingle();
-        if (error) {
-          console.error("study_goals 保存エラー:", error);
-          setMessage(`参考書の保存に失敗しました: ${error.message}`);
-          setStudyGoals((current) => current.filter((goal) => goal.id !== newGoal.id));
-          return;
-        }
-        if (data) {
-          setStudyGoals((current) => current.map((goal) => goal.id === newGoal.id ? data : goal));
-        }
-      }
-      setMessage("参考書を登録しました。");
-    }
-
-    resetGoalForm();
-  };
-
-  const editStudyGoal = (goal) => {
-    setEditingGoalId(goal.id);
-    setGoalForm({
-      title: goal.title || "",
-      subject: goal.subject || "その他",
-      total_pages: goal.total_pages || 1,
-      current_page: goal.current_page || 0,
-      deadline: goal.deadline || todayString(),
-      minutes_per_page: goal.minutes_per_page || 3,
-      priority: goal.priority || 3,
-    });
-    setActiveTab("progress");
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  };
-
-  const deleteStudyGoal = async (goal) => {
-    if (!goal?.id) return;
-    if (!window.confirm(`「${goal.title}」を削除しますか？`)) return;
-    setStudyGoals((current) => current.filter((item) => item.id !== goal.id));
-    if (session?.user?.id) {
-      const { error } = await supabase
-        .from("study_goals")
-        .delete()
-        .eq("id", goal.id)
-        .eq("user_id", session.user.id);
-      if (error) {
-        console.error("study_goals 削除エラー:", error);
-        setMessage(`参考書の削除に失敗しました: ${error.message}`);
-        return;
-      }
-    }
-    setMessage("参考書を削除しました。");
-  };
-
-  const goalDailyStats = useMemo(() => {
-    const targetDate = selectedDate;
-    return studyGoals.filter((goal) => goal.is_active !== false).map((goal) => {
-      const total = Math.max(1, Number(goal.total_pages) || 1);
-      const current = Math.min(total, Math.max(0, Number(goal.current_page) || 0));
-      const remaining = Math.max(0, total - current);
-      const today = new Date(`${targetDate}T00:00:00`);
-      const deadline = new Date(`${goal.deadline}T00:00:00`);
-      const days = Math.max(1, Math.ceil((deadline - today) / 86400000) + 1);
-      const dailyPages = remaining > 0 ? Math.ceil(remaining / days) : 0;
-      const dailyMinutes = Math.ceil(dailyPages * Math.max(0.1, Number(goal.minutes_per_page) || 0));
-      const progress = Math.min(100, Math.round((current / total) * 100));
-      return { ...goal, total, current, remaining, days, dailyPages, dailyMinutes, progress };
-    }).sort((a, b) => b.priority - a.priority || a.deadline.localeCompare(b.deadline));
-  }, [studyGoals, selectedDate]);
-
-    /*
-  ================================================
   自動計画
   ================================================
   */
+
+  const planningRecommendations = useMemo(() => {
+    const date = selectedDate;
+    return tasks
+      .filter((task) => !task.completed)
+      .map((task) => ({
+        ...task,
+        remaining: Math.max(
+          0,
+          Number(task.minutes || 0) -
+            Number(task.studied_minutes || 0)
+        ),
+      }))
+      .filter((task) => task.remaining > 0)
+      .sort((a, b) => {
+        const aDate = a.task_date || "9999-12-31";
+        const bDate = b.task_date || "9999-12-31";
+        if (aDate !== bDate) return aDate.localeCompare(bDate);
+        if (Number(b.priority || 0) !== Number(a.priority || 0)) {
+          return Number(b.priority || 0) - Number(a.priority || 0);
+        }
+        return b.remaining - a.remaining;
+      });
+  }, [tasks, selectedDate]);
+
+  const planningSelectedTasks = useMemo(
+    () => tasks.filter((task) => planningTaskIds.includes(task.id)),
+    [tasks, planningTaskIds]
+  );
+
+  const planningMaxSubjects =
+    planningMode === "focused"
+      ? 2
+      : planningMode === "balanced"
+      ? 4
+      : 3;
+
+  const planningPreview = useMemo(() => {
+    const nextSettings = normalizeSettings({
+      ...settings,
+      studyStart: planningWindow.start,
+      studyEnd: planningWindow.end,
+    });
+
+    return generatePlan({
+      dateString: selectedDate,
+      tasks: planningSelectedTasks,
+      settings: nextSettings,
+      fixedSchedules,
+      eligibleTaskIds: planningTaskIds,
+      maxSubjectsPerDay: planningMaxSubjects,
+    });
+  }, [
+    selectedDate,
+    planningSelectedTasks,
+    planningTaskIds,
+    planningWindow,
+    planningMode,
+    planningMaxSubjects,
+    settings,
+    fixedSchedules,
+  ]);
+
+  const startPlanningWizard = () => {
+    setPlanningStep(1);
+    setPlanningWindow({
+      start: settings.studyStart,
+      end: settings.studyEnd,
+    });
+    setPlanningTaskIds(
+      planningRecommendations.slice(0, 8).map((task) => task.id)
+    );
+    setActiveTab("plan");
+  };
+
+  const finishPlanningWizard = async () => {
+    const start = timeToMinutes(planningWindow.start);
+    const end = timeToMinutes(planningWindow.end);
+
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+      setMessage("勉強終了時刻は開始時刻より後にしてください。");
+      return;
+    }
+
+    const nextSettings = normalizeSettings({
+      ...settings,
+      studyStart: planningWindow.start,
+      studyEnd: planningWindow.end,
+    });
+    setSettings(nextSettings);
+
+    if (session?.user?.id) {
+      await supabase
+        .from("study_settings")
+        .upsert({
+          user_id: session.user.id,
+          wake_up_time: nextSettings.wakeUpTime,
+          morning_prep_minutes: Number(nextSettings.morningPrepMinutes),
+          use_study_room: Boolean(nextSettings.useStudyRoom),
+          travel_minutes: Number(nextSettings.travelMinutes),
+          study_start: nextSettings.studyStart,
+          study_end: nextSettings.studyEnd,
+          default_task_minutes: Number(nextSettings.defaultTaskMinutes),
+        }, { onConflict: "user_id" });
+    }
+
+    const normalizedPlan = planningPreview.plan.map((item, index) => ({
+      ...item,
+      aiGenerated: true,
+      reason: item.reason || "期限・優先度・今日の勉強時間をもとに提案",
+      id: `plan-${Date.now()}-${index}`,
+    }));
+
+    setAiAdoptedPlan(normalizedPlan);
+    try {
+      localStorage.setItem(
+        `studyflow_ai_plan_${selectedDate}`,
+        JSON.stringify(normalizedPlan)
+      );
+    } catch (error) {
+      console.error("計画の保存に失敗しました:", error);
+    }
+
+    setPlanningStep(1);
+    setActiveTab("today");
+    setMessage("今日の計画を作成しました。ホームで確認できます。");
+  };
 
   const planData = useMemo(
     () =>
@@ -2646,7 +2353,7 @@ const handleAdoptAIPlan = useCallback(
     /*
      * 今日の計画タブへ移動
      */
-    setActiveTab("planning");
+    setActiveTab("today");
 
     /*
      * 保存できる状態にする
@@ -2902,7 +2609,6 @@ const handleAdoptAIPlan = useCallback(
     setTasks([]);
     setFixedSchedules([]);
     setStudyLogs([]);
-    setStudySessions([]);
     setTimerRunning(false);
     setTimerSeconds(0);
   };
@@ -2968,75 +2674,26 @@ const handleAdoptAIPlan = useCallback(
 
       <div className="layout">
         <aside className="sidebar">
-          <button
-            className={
-              activeTab === "today"
-                ? "nav-button active"
-                : "nav-button"
-            }
-            onClick={() =>
-              setActiveTab("today")
-            }
-          >
-            <span>⌂</span>
-            今日
-          </button>
-
-          <button
-            className={
-              activeTab === "plan"
-                ? "nav-button active"
-                : "nav-button"
-            }
-            onClick={() =>
-              setActiveTab("plan")
-            }
-          >
-            <span>✦</span>
-            自動計画
-          </button>
-
-          <button
-            className={
-              activeTab === "calendar"
-                ? "nav-button active"
-                : "nav-button"
-            }
-            onClick={() =>
-              setActiveTab("calendar")
-            }
-          >
-            <span>□</span>
-            カレンダー
-          </button>
-
-          <button
-            className={
-              activeTab === "progress"
-                ? "nav-button active"
-                : "nav-button"
-            }
-            onClick={() =>
-              setActiveTab("progress")
-            }
-          >
-            <span>↗</span>
-            進捗
-          </button>
-
-          <button
-            className={
-              activeTab === "settings"
-                ? "nav-button active"
-                : "nav-button"
-            }
-            onClick={() =>
-              setActiveTab("settings")
-            }
-          >
-            <span>⚙</span>
-            設定
-          </button>
+          {[
+            ["today", "⌂", "ホーム"],
+            ["plan", "✦", "計画を立てる"],
+            ["execute", "▶", "勉強を実行する"],
+            ["calendar", "□", "カレンダー"],
+            ["progress", "↗", "記録・進捗"],
+            ["settings", "⚙", "設定"],
+          ].map(([tab, icon, label]) => (
+            <button
+              key={tab}
+              className={activeTab === tab ? "nav-button active" : "nav-button"}
+              onClick={() => {
+                if (tab === "plan") startPlanningWizard();
+                else setActiveTab(tab);
+              }}
+            >
+              <span>{icon}</span>
+              {label}
+            </button>
+          ))}
         </aside>
 
         <main className="main-content">
@@ -3184,17 +2841,21 @@ const handleAdoptAIPlan = useCallback(
               </section>
 
               <div className="content-grid">
-                <AIPlanPanel
-  date={selectedDate}
-  tasks={tasks.filter(
-    (task) =>
-      task.task_date === selectedDate
-  )}
-  fixedSchedules={selectedFixedSchedules}
-  settings={settings}
-  currentPlan={planData.plan}
-  onAdopt={handleAdoptAIPlan}
-/>
+                <section className="card">
+                  <div className="section-header">
+                    <div>
+                      <h2>今日の計画</h2>
+                      <p>勉強できる時間・予定・タスクから今日の計画を作ります。</p>
+                    </div>
+                  </div>
+                  <div className="empty-state">
+                    <strong>今日やることをStudyFlowに決めてもらう</strong>
+                    <p>計画を立てる画面で、順番に確認するだけです。</p>
+                    <button className="primary-button" onClick={startPlanningWizard}>
+                      ✦ 計画を立てる
+                    </button>
+                  </div>
+                </section>
                 <section className="card">
                   <div className="section-header">
                     <div>
@@ -3498,86 +3159,6 @@ const handleAdoptAIPlan = useCallback(
                 </section>
 
                 <div className="right-column">
-                  <section className="card timer-card">
-                    <div className="section-header">
-                      <div>
-                        <h2>学習タイマー</h2>
-                        <p>
-                          学習時間を自動記録
-                        </p>
-                      </div>
-                    </div>
-
-                    <select
-                      value={timerTaskId}
-                      onChange={(e) =>
-                        setTimerTaskId(
-                          e.target.value
-                        )
-                      }
-                    >
-                      <option value="">
-                        タスクを選択
-                      </option>
-
-                      {selectedTasks
-                        .filter(
-                          (task) =>
-                            !task.completed
-                        )
-                        .map((task) => (
-                          <option
-                            key={task.id}
-                            value={task.id}
-                          >
-                            {task.subject}：
-                            {task.title}
-                          </option>
-                        ))}
-                    </select>
-
-                    <div className="timer-display">
-                      {timerDisplay}
-                    </div>
-
-                    <div className="timer-buttons">
-                      <button
-                        className="primary-button"
-                        disabled={!timerTaskId}
-                        onClick={() =>
-                          setTimerRunning(
-                            (current) =>
-                              !current
-                          )
-                        }
-                      >
-                        {timerRunning
-                          ? "一時停止"
-                          : "スタート"}
-                      </button>
-
-                      <button
-                        className="secondary-button"
-                        onClick={resetTimer}
-                      >
-                        リセット
-                      </button>
-
-                      <button
-                        className="secondary-button"
-                        disabled={
-                          !timerTaskId ||
-                          timerSeconds === 0
-                        }
-                        onClick={
-                          saveTimerSession
-                        }
-                      >
-                        学習終了
-                      </button>
-                    </div>
-                  </section>
-
                   <section className="card">
                     <div className="section-header">
                       <div>
@@ -3772,283 +3353,168 @@ const handleAdoptAIPlan = useCallback(
             <>
               <div className="page-header">
                 <div>
-                  <p className="eyebrow">
-                    PLANNING ENGINE
-                  </p>
-
-                  <h1>自動学習計画</h1>
-
-                  <p className="page-description">
-                    優先度・残り時間・固定予定・空き時間から自動配置します。
-                  </p>
+                  <p className="eyebrow">PLANNING</p>
+                  <h1>計画を立てる</h1>
+                  <p className="page-description">順番に答えるだけで、StudyFlowが今日の計画を作ります。</p>
                 </div>
-
                 <div className="date-control">
-                  <button
-                    onClick={() =>
-                      setSelectedDate(
-                        addDays(
-                          selectedDate,
-                          -1
-                        )
-                      )
-                    }
-                  >
-                    ←
-                  </button>
-
-                  <input
-                    type="date"
-                    value={selectedDate}
-                    onChange={(e) =>
-                      setSelectedDate(
-                        e.target.value
-                      )
-                    }
-                  />
-
-                  <button
-                    onClick={() =>
-                      setSelectedDate(
-                        addDays(
-                          selectedDate,
-                          1
-                        )
-                      )
-                    }
-                  >
-                    →
-                  </button>
+                  <button onClick={() => setSelectedDate(addDays(selectedDate, -1))}>←</button>
+                  <input type="date" value={selectedDate} onChange={(e) => { setSelectedDate(e.target.value); setPlanningStep(1); }} />
+                  <button onClick={() => setSelectedDate(addDays(selectedDate, 1))}>→</button>
                 </div>
               </div>
 
-              <section className="planning-summary">
-                <div>
-                  <span>勉強可能</span>
-                  <strong>
-                    {formatMinutes(
-                      planData.totalAvailable
-                    )}
-                  </strong>
-                </div>
-
-                <div>
-                  <span>必要</span>
-                  <strong>
-                    {formatMinutes(
-                      planData.totalRequired
-                    )}
-                  </strong>
-                </div>
-
-                <div>
-                  <span>配置済み</span>
-                  <strong>
-                    {formatMinutes(
-                      planData.plannedMinutes
-                    )}
-                  </strong>
-                </div>
-
-                <div
-                  className={
-                    planData.shortage > 0
-                      ? "danger"
-                      : "success"
-                  }
-                >
-                  <span>
-                    {planData.shortage > 0
-                      ? "不足"
-                      : "余裕"}
-                  </span>
-
-                  <strong>
-                    {formatMinutes(
-                      planData.shortage > 0
-                        ? planData.shortage
-                        : planData.remainingAfterPlan
-                    )}
-                  </strong>
-                </div>
-              </section>
-
               <section className="card">
                 <div className="section-header">
                   <div>
-                    <h2>{selectedDate === todayString() ? "今日の参考書目標" : "この日の参考書目標"}</h2>
-                    <p>締切から逆算した、1日に進めたいページ数です。</p>
+                    <h2>STEP {planningStep} / 5</h2>
+                    <p>今日の計画を作成します</p>
                   </div>
                 </div>
-                <div className="slot-list">
-                  {goalDailyStats.map((goal) => (
-                    <div className="slot-item" key={`daily-${goal.id}`}>
-                      <strong>{goal.subject}：{goal.title}</strong>
-                      <span>{goal.dailyPages}ページ ・ {formatMinutes(goal.dailyMinutes)}</span>
+
+                {planningStep === 1 && (
+                  <div>
+                    <h2>何時から何時まで勉強できますか？</h2>
+                    <p className="muted">この時間の中から、固定予定を避けて勉強時間を作ります。</p>
+                    <div className="form-row">
+                      <label>開始時刻<input type="time" value={planningWindow.start} onChange={(e) => setPlanningWindow((v) => ({ ...v, start: e.target.value }))} /></label>
+                      <label>終了時刻<input type="time" value={planningWindow.end} onChange={(e) => setPlanningWindow((v) => ({ ...v, end: e.target.value }))} /></label>
                     </div>
-                  ))}
-                  {goalDailyStats.length === 0 && <p className="muted">参考書の目標を登録すると、ここに1日の目標が表示されます。</p>}
-                </div>
-              </section>
-
-              {planData.shortage > 0 && (
-                <div className="warning-card">
-                  <strong>
-                    今日の空き時間だけでは、
-                    すべてのタスクを終えられません。
-                  </strong>
-
-                  <p>
-                    優先度の高いタスクから自動的に配置しています。
-                    残り{" "}
-                    {formatMinutes(
-                      planData.shortage
-                    )}{" "}
-                    あります。
-                  </p>
-                </div>
-              )}
-
-              <section className="card">
-                <div className="section-header">
-                  <div>
-                    <h2>今日の自動計画</h2>
-                    <p>
-                      {formatDateJP(
-                        selectedDate
-                      )}
-                    </p>
-                  </div>
-                </div>
-
-              {currentPlanForAI.length ===
-  0 && (
-                  <div className="empty-state">
-                    <strong>
-                      配置できるタスクがありません
-                    </strong>
-                    <p>
-                      タスクを追加するか、
-                      固定予定・勉強時間帯を確認してください。
-                    </p>
+                    <div className="form-actions">
+                      <button className="primary-button" onClick={() => setPlanningStep(2)}>次へ →</button>
+                    </div>
                   </div>
                 )}
 
-                <div className="form-actions" style={{ marginBottom: "16px" }}>
-                  <button
-                    className="secondary-button"
-                    type="button"
-                    onClick={() => setAiAdoptedPlan(null)}
-                  >
-                    自動計画を再計算
-                  </button>
-                </div>
-
-                <div className="plan-list">
-                  {currentPlanForAI.map(
-  (item) => (
-                      <div
-                        className="plan-item"
-                        key={item.id}
-                      >
-                        <div className="plan-time">
-                          {minutesToTime(
-                            item.start
-                          )}
-                          <span>↓</span>
-                          {minutesToTime(
-                            item.end
-                          )}
-                        </div>
-
-                        <div className="plan-bar">
-                          <div
-                            className="subject-tag"
-                          >
-                            {
-                              item.subject
-                            }
-                          </div>
-
-                          <strong>
-                            {item.title}
-                          </strong>
-
-                          <span>
-  {item.minutes}分 · 優先度{" "}
-  {item.priority}
-
-  {item.aiGenerated &&
-    item.reason && (
-      <> · {item.reason}</>
-    )}
-</span>
-                        </div>
-
-                        <button
-                          className="secondary-button small"
-                          onClick={() => {
-                            setTimerTaskId(
-                              item.taskId
-                            );
-                            setActiveTab(
-                              "today"
-                            );
-                          }}
-                        >
-                          ▶ 開始
-                        </button>
-                      </div>
-                    )
-                  )}
-                </div>
-              </section>
-
-              <section className="card">
-                <div className="section-header">
+                {planningStep === 2 && (
                   <div>
-                    <h2>空き時間</h2>
-                    <p>
-                      自動計画が利用できる時間帯
-                    </p>
-                  </div>
-                </div>
-
-                <div className="slot-list">
-                  {planData.slots.map(
-                    (slot, index) => (
-                      <div
-                        className="slot-item"
-                        key={`${slot.start}-${index}`}
-                      >
-                        <strong>
-                          {minutesToTime(
-                            slot.start
-                          )}{" "}
-                          -{" "}
-                          {minutesToTime(
-                            slot.end
-                          )}
-                        </strong>
-
-                        <span>
-                          {formatMinutes(
-                            slot.minutes
-                          )}
-                        </span>
+                    <h2>勉強できない予定はありますか？</h2>
+                    <p className="muted">学校・塾・部活・食事などを登録すると、その時間を自動で避けます。</p>
+                    <form className="compact-form" onSubmit={addFixedSchedule}>
+                      <input value={fixedForm.title} onChange={(e) => setFixedForm((v) => ({ ...v, title: e.target.value, schedule_date: selectedDate }))} placeholder="例：塾" />
+                      <div className="form-row">
+                        <input type="time" value={fixedForm.start_time} onChange={(e) => setFixedForm((v) => ({ ...v, start_time: e.target.value }))} />
+                        <input type="time" value={fixedForm.end_time} onChange={(e) => setFixedForm((v) => ({ ...v, end_time: e.target.value }))} />
                       </div>
-                    )
-                  )}
-                </div>
+                      <button className="secondary-button" type="submit">＋ 予定を追加</button>
+                    </form>
+                    <div className="fixed-list">
+                      {selectedFixedSchedules.length === 0 ? <p className="muted">登録された固定予定はありません。</p> : selectedFixedSchedules.map((schedule) => (
+                        <div className="fixed-item" key={schedule.id}>
+                          <div><strong>{schedule.title}</strong><span>{schedule.start_time} - {schedule.end_time}</span></div>
+                          <button onClick={() => deleteFixedSchedule(schedule.id)}>×</button>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="form-actions">
+                      <button className="secondary-button" onClick={() => setPlanningStep(1)}>← 戻る</button>
+                      <button className="primary-button" onClick={() => { setPlanningTaskIds(planningRecommendations.slice(0, 8).map((task) => task.id)); setPlanningStep(3); }}>次へ →</button>
+                    </div>
+                  </div>
+                )}
+
+                {planningStep === 3 && (
+                  <div>
+                    <h2>今日はこのタスクがおすすめです</h2>
+                    <p className="muted">登録済みのタスクの期限・優先度・残り時間をもとにStudyFlowが提案しています。不要ならチェックを外せます。</p>
+                    <div className="recommendation-list">
+                      {planningRecommendations.length === 0 ? (
+                        <div className="empty-state"><strong>おすすめできるタスクがありません</strong><p>ホームでタスクを登録してから、もう一度計画を立ててください。</p></div>
+                      ) : planningRecommendations.map((task) => {
+                        const checked = planningTaskIds.includes(task.id);
+                        return (
+                          <label className={`recommendation-item ${checked ? "selected" : ""}`} key={task.id}>
+                            <input type="checkbox" checked={checked} onChange={() => setPlanningTaskIds((ids) => checked ? ids.filter((id) => id !== task.id) : [...ids, task.id])} />
+                            <div><strong>{task.subject}：{task.title}</strong><span>期限 {task.task_date || "未設定"} · 残り {formatMinutes(task.remaining)} · 優先度 {task.priority}</span></div>
+                          </label>
+                        );
+                      })}
+                    </div>
+                    <div className="form-actions">
+                      <button className="secondary-button" onClick={() => setPlanningStep(2)}>← 戻る</button>
+                      <button className="primary-button" disabled={planningTaskIds.length === 0} onClick={() => setPlanningStep(4)}>次へ →</button>
+                    </div>
+                  </div>
+                )}
+
+                {planningStep === 4 && (
+                  <div>
+                    <h2>どれくらいの教科数で勉強しますか？</h2>
+                    <p className="muted">同じ教科を複数ブロックに分けることもできます。</p>
+                    <div className="planning-mode-grid">
+                      {[
+                        ["focused", "集中型", "1〜2教科をじっくり進める", "2"],
+                        ["standard", "標準型", "2〜3教科。おすすめ", "3"],
+                        ["balanced", "バランス型", "3〜4教科を少しずつ進める", "4"],
+                      ].map(([value, title, desc, count]) => (
+                        <button type="button" key={value} className={`planning-mode-card ${planningMode === value ? "selected" : ""}`} onClick={() => setPlanningMode(value)}>
+                          <strong>{title}</strong><span>{desc}</span><small>最大 {count} 教科</small>
+                        </button>
+                      ))}
+                    </div>
+                    <div className="form-actions">
+                      <button className="secondary-button" onClick={() => setPlanningStep(3)}>← 戻る</button>
+                      <button className="primary-button" onClick={() => setPlanningStep(5)}>次へ →</button>
+                    </div>
+                  </div>
+                )}
+
+                {planningStep === 5 && (
+                  <div>
+                    <h2>今日の計画を確認</h2>
+                    <p className="muted">問題なければ「この計画で決定」を押してください。</p>
+                    <div className="plan-list">
+                      {planningPreview.plan.length === 0 ? <div className="empty-state"><strong>計画を作れませんでした</strong><p>勉強時間・固定予定・おすすめタスクを確認してください。</p></div> : planningPreview.plan.map((item) => (
+                        <div className="plan-item" key={`${item.taskId}-${item.start}-${item.end}`}>
+                          <div className="plan-time">{minutesToTime(item.start)}<span>↓</span>{minutesToTime(item.end)}</div>
+                          <div className="plan-bar"><div className="subject-tag">{item.subject}</div><strong>{item.title}</strong><span>{item.minutes}分</span></div>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="planning-summary">
+                      <div><span>勉強可能</span><strong>{formatMinutes(planningPreview.totalAvailable)}</strong></div>
+                      <div><span>計画</span><strong>{formatMinutes(planningPreview.plannedMinutes)}</strong></div>
+                    </div>
+                    <div className="form-actions">
+                      <button className="secondary-button" onClick={() => setPlanningStep(4)}>← 戻る</button>
+                      <button className="primary-button" disabled={planningPreview.plan.length === 0} onClick={finishPlanningWizard}>✓ この計画で決定</button>
+                    </div>
+                  </div>
+                )}
               </section>
             </>
           )}
 
-          {/*
-          ========================================
-          CALENDAR
-          ========================================
-          */}
+          {activeTab === "execute" && (
+            <>
+              <div className="page-header">
+                <div>
+                  <p className="eyebrow">EXECUTE</p>
+                  <h1>勉強を実行する</h1>
+                  <p className="page-description">今日の計画を見ながら、タイマーで実際の学習時間を記録します。</p>
+                </div>
+              </div>
+              <section className="card timer-card">
+                <div className="section-header"><div><h2>今から勉強する</h2><p>タスクを選んでタイマーを開始してください。</p></div></div>
+                <select value={timerTaskId} onChange={(e) => setTimerTaskId(e.target.value)}>
+                  <option value="">タスクを選択</option>
+                  {selectedTasks.filter((task) => !task.completed).map((task) => <option key={task.id} value={task.id}>{task.subject}：{task.title}</option>)}
+                </select>
+                <div className="timer-display">{timerDisplay}</div>
+                <div className="timer-buttons">
+                  <button className="primary-button" disabled={!timerTaskId} onClick={() => setTimerRunning((current) => !current)}>{timerRunning ? "一時停止" : "スタート"}</button>
+                  <button className="secondary-button" onClick={resetTimer}>リセット</button>
+                  <button className="secondary-button" disabled={!timerTaskId || timerSeconds === 0} onClick={saveTimerSession}>学習終了</button>
+                </div>
+              </section>
+              <section className="card">
+                <div className="section-header"><div><h2>今日のスケジュール</h2><p>{formatDateJP(selectedDate)}</p></div></div>
+                <div className="plan-list">
+                  {currentPlanForAI.length === 0 ? <p className="muted">まだ今日の計画がありません。「計画を立てる」から作成してください。</p> : currentPlanForAI.map((item) => <div className="plan-item" key={item.id}><div className="plan-time">{minutesToTime(item.start)}<span>↓</span>{minutesToTime(item.end)}</div><div className="plan-bar"><div className="subject-tag">{item.subject}</div><strong>{item.title}</strong><span>{item.minutes}分</span></div><button className="secondary-button small" onClick={() => setTimerTaskId(item.taskId || "")}>選択</button></div>)}
+                </div>
+              </section>
+            </>
+          )}
 
           {activeTab === "calendar" && (
             <>
@@ -4213,57 +3679,6 @@ const handleAdoptAIPlan = useCallback(
 
           {activeTab === "progress" && (
             <>
-              <section className="card">
-                <div className="section-header">
-                  <div>
-                    <h2>参考書の進捗</h2>
-                    <p>現在のページを記録すると、締切までの1日あたりの目標ページ数を自動計算します。</p>
-                  </div>
-                </div>
-
-                <form className="settings-form" onSubmit={saveStudyGoal}>
-                  <div className="form-row">
-                    <label className="wide">参考書・教材名<input value={goalForm.title} onChange={(e) => setGoalForm((c) => ({ ...c, title: e.target.value }))} placeholder="例：数学 基礎問題精講" /></label>
-                    <label>科目<select value={goalForm.subject} onChange={(e) => setGoalForm((c) => ({ ...c, subject: e.target.value }))}>{SUBJECTS.map((subject) => <option key={subject} value={subject}>{subject}</option>)}</select></label>
-                  </div>
-                  <div className="form-row">
-                    <label>全ページ<input type="number" min="1" value={goalForm.total_pages} onChange={(e) => setGoalForm((c) => ({ ...c, total_pages: e.target.value }))} /></label>
-                    <label>現在のページ<input type="number" min="0" value={goalForm.current_page} onChange={(e) => setGoalForm((c) => ({ ...c, current_page: e.target.value }))} /></label>
-                    <label>締切<input type="date" value={goalForm.deadline} onChange={(e) => setGoalForm((c) => ({ ...c, deadline: e.target.value }))} /></label>
-                  </div>
-                  <div className="form-row">
-                    <label>1ページの目安（分）<input type="number" min="0.1" step="0.1" value={goalForm.minutes_per_page} onChange={(e) => setGoalForm((c) => ({ ...c, minutes_per_page: e.target.value }))} /></label>
-                    <label>優先度<select value={goalForm.priority} onChange={(e) => setGoalForm((c) => ({ ...c, priority: e.target.value }))}>{[1,2,3,4,5].map((n) => <option key={n} value={n}>{n}</option>)}</select></label>
-                  </div>
-                  <div className="form-actions">
-                    <button className="primary-button" type="submit">{editingGoalId ? "進捗を更新" : "参考書を登録"}</button>
-                    {editingGoalId && <button className="secondary-button" type="button" onClick={resetGoalForm}>キャンセル</button>}
-                  </div>
-                </form>
-
-                <div className="goal-list" style={{ marginTop: "18px" }}>
-                  {goalDailyStats.map((goal) => (
-                    <div className="card" key={goal.id} style={{ margin: "12px 0 0" }}>
-                      <div className="section-header">
-                        <div><strong>{goal.title}</strong><p>{goal.subject} ・ 締切 {formatDateJP(goal.deadline)}</p></div>
-                        <strong>{goal.progress}%</strong>
-                      </div>
-                      <div className="progress-line"><div style={{ width: `${goal.progress}%` }} /></div>
-                      <p className="task-meta">{goal.current} / {goal.total}ページ ・ 残り{goal.remaining}ページ</p>
-                      <div className="planning-summary" style={{ marginTop: "12px" }}>
-                        <div><span>今日の目標</span><strong>{goal.dailyPages}ページ</strong></div>
-                        <div><span>目安時間</span><strong>{formatMinutes(goal.dailyMinutes)}</strong></div>
-                        <div><span>残り日数</span><strong>{goal.days}日</strong></div>
-                      </div>
-                      <div className="form-actions" style={{ marginTop: "12px" }}>
-                        <button className="secondary-button small" type="button" onClick={() => editStudyGoal(goal)}>進捗を更新</button>
-                        <button className="secondary-button small" type="button" onClick={() => deleteStudyGoal(goal)}>削除</button>
-                      </div>
-                    </div>
-                  ))}
-                  {goalDailyStats.length === 0 && <p className="muted">参考書を登録すると、今日どこまで進めればよいか表示されます。</p>}
-                </div>
-              </section>
               <div className="page-header">
                 <div>
                   <p className="eyebrow">
@@ -4457,85 +3872,6 @@ const handleAdoptAIPlan = useCallback(
               <section className="card">
                 <div className="section-header">
                   <div>
-                    <h2>あとから学習時間を記録</h2>
-                    <p>タイマーを使わなかった勉強も、あとから追加できます。</p>
-                  </div>
-                </div>
-
-                <form className="settings-form" onSubmit={saveManualStudyLog}>
-                  <div className="form-row">
-                    <label>
-                      日付
-                      <input
-                        type="date"
-                        value={manualLogForm.study_date}
-                        onChange={(e) => setManualLogForm((current) => ({ ...current, study_date: e.target.value }))}
-                      />
-                    </label>
-                    <label>
-                      科目
-                      <select
-                        value={manualLogForm.subject}
-                        onChange={(e) => setManualLogForm((current) => ({ ...current, subject: e.target.value }))}
-                      >
-                        {SUBJECTS.map((subject) => (
-                          <option key={subject} value={subject}>{subject}</option>
-                        ))}
-                      </select>
-                    </label>
-                    <label>
-                      学習時間（分）
-                      <input
-                        type="number"
-                        min="1"
-                        value={manualLogForm.minutes}
-                        onChange={(e) => setManualLogForm((current) => ({ ...current, minutes: e.target.value }))}
-                      />
-                    </label>
-                  </div>
-
-                  <div className="form-row">
-                    <label className="wide">
-                      関連タスク（任意）
-                      <select
-                        value={manualLogForm.task_id}
-                        onChange={(e) => {
-                          const task = tasks.find((item) => item.id === e.target.value);
-                          setManualLogForm((current) => ({
-                            ...current,
-                            task_id: e.target.value,
-                            subject: task?.subject || current.subject,
-                            title: task?.title || current.title,
-                          }));
-                        }}
-                      >
-                        <option value="">タスクを選択しない</option>
-                        {tasks.slice().sort((a, b) => a.task_date.localeCompare(b.task_date)).map((task) => (
-                          <option key={task.id} value={task.id}>
-                            {task.task_date}｜{task.subject}：{task.title}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label className="wide">
-                      学習内容（任意）
-                      <input
-                        value={manualLogForm.title}
-                        onChange={(e) => setManualLogForm((current) => ({ ...current, title: e.target.value }))}
-                        placeholder="例：数学の問題演習"
-                      />
-                    </label>
-                  </div>
-
-                  <div className="form-actions">
-                    <button className="primary-button" type="submit">学習時間を記録</button>
-                  </div>
-                </form>
-              </section>
-
-              <section className="card">
-                <div className="section-header">
-                  <div>
                     <h2>学習ログ</h2>
                     <p>
                       今月の記録
@@ -4572,35 +3908,13 @@ const handleAdoptAIPlan = useCallback(
                       </div>
                     ))}
 
-                  {studyLogs.length === 0 && studySessions.length === 0 && (
-                    <p className="muted">学習ログはまだありません。</p>
+                  {studyLogs.length ===
+                    0 && (
+                    <p className="muted">
+                      学習ログはまだありません。
+                    </p>
                   )}
                 </div>
-
-                {studySessions.length > 0 && (
-                  <div className="log-list" style={{ marginTop: "16px" }}>
-                    {studySessions.slice(0, 20).map((item) => (
-                      <div className="log-item" key={item.id}>
-                        <span>
-                          {formatDateJP(item.study_date)} ・ {item.subject} ・ {item.title}
-                          <small style={{ marginLeft: "8px" }}>
-                            {item.source === "timer" ? "タイマー" : "手動記録"}
-                          </small>
-                        </span>
-                        <div className="log-item-actions" style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                          <strong>{formatMinutes(item.minutes)}</strong>
-                          <button
-                            type="button"
-                            className="secondary-button small"
-                            onClick={() => deleteStudySession(item)}
-                          >
-                            削除
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
               </section>
             </>
           )}
