@@ -1153,6 +1153,8 @@ function App() {
   const [activeTab, setActiveTab] = useState("today");
 
   const [planningStep, setPlanningStep] = useState(1);
+  // STEP 2で外した予定は、選択中の日付の計画だけに適用します。
+  const [excludedPlanningScheduleKeys, setExcludedPlanningScheduleKeys] = useState([]);
   const [planningMode, setPlanningMode] = useState("standard");
   const [planningTaskIds, setPlanningTaskIds] = useState([]);
   const [planningRecommendedIds, setPlanningRecommendedIds] = useState([]);
@@ -2682,10 +2684,38 @@ const saveSettings = async (event) => {
       .filter(Boolean);
   }, [tasks, planningTaskIds, planningRecommendations, planningEdits]);
 
+  const planningScheduleKey = (schedule) => `${selectedDate}|${schedule.scheduleSource || "fixed"}|${schedule.id}|${schedule.title}|${schedule.start_time}|${schedule.end_time}`;
+
+  const planningFixedSchedules = useMemo(() => fixedSchedules.filter((schedule) => {
+    if (!scheduleAppliesToDate(schedule, selectedDate)) return true;
+    const key = `${selectedDate}|fixed|${schedule.id}|${schedule.title}|${schedule.start_time}|${schedule.end_time}`;
+    return !excludedPlanningScheduleKeys.includes(key);
+  }), [fixedSchedules, selectedDate, excludedPlanningScheduleKeys]);
+
+  const settingsWithPlanningScheduleExclusions = useMemo(() => {
+    const day = String(new Date(`${selectedDate}T12:00:00`).getDay());
+    const base = settingsForPlanningWindow(settings, selectedDate, planningWindow);
+    const daySettings = getWeekdaySettings(selectedDate, base);
+    const keptSchedules = daySettings.schedules.filter((schedule, index) => {
+      const id = schedule.id || `weekday-${new Date(`${selectedDate}T12:00:00`).getDay()}-${index}`;
+      const title = schedule.title || schedule.name || schedule.label || "固定予定";
+      const start = schedule.start_time || schedule.startTime || schedule.start || "";
+      const end = schedule.end_time || schedule.endTime || schedule.end || "";
+      const key = `${selectedDate}|weekday|${id}|${title}|${start}|${end}`;
+      return !excludedPlanningScheduleKeys.includes(key);
+    });
+    return {
+      ...base,
+      weekdaySettings: {
+        ...base.weekdaySettings,
+        [day]: { ...base.weekdaySettings?.[day], schedules: keptSchedules },
+      },
+    };
+  }, [settings, selectedDate, planningWindow, excludedPlanningScheduleKeys]);
+
   const planningAvailableMinutes = useMemo(() => {
-    const nextSettings = settingsForPlanningWindow(settings, selectedDate, planningWindow);
-    return getAvailableMinutes(selectedDate, nextSettings, fixedSchedules);
-  }, [selectedDate, planningWindow, settings, fixedSchedules]);
+    return getAvailableMinutes(selectedDate, settingsWithPlanningScheduleExclusions, planningFixedSchedules);
+  }, [selectedDate, settingsWithPlanningScheduleExclusions, planningFixedSchedules]);
 
   const planningSelectedMinutes = planningSelectedTasks.reduce(
     (sum, task) => sum + Number(task.minutes || 0),
@@ -2703,13 +2733,11 @@ const saveSettings = async (event) => {
       : 3;
 
   const planningPreview = useMemo(() => {
-    const nextSettings = settingsForPlanningWindow(settings, selectedDate, planningWindow);
-
     const generated = generatePlan({
       dateString: selectedDate,
       tasks: planningSelectedTasks,
-      settings: nextSettings,
-      fixedSchedules,
+      settings: settingsWithPlanningScheduleExclusions,
+      fixedSchedules: planningFixedSchedules,
       eligibleTaskIds: planningTaskIds,
       maxSubjectsPerDay: planningMaxSubjects,
       breakMinutes: Math.max(0, Number(planningWindow.breakMinutes === "" ? 0 : planningWindow.breakMinutes ?? settings.breakMinutes ?? 10) || 0),
@@ -2734,7 +2762,8 @@ const saveSettings = async (event) => {
     planningMode,
     planningMaxSubjects,
     settings,
-    fixedSchedules,
+    planningFixedSchedules,
+    settingsWithPlanningScheduleExclusions,
   ]);
 
   const startPlanningWizard = () => {
@@ -3172,8 +3201,12 @@ const handleAdoptAIPlan = useCallback(
           timeToMinutes(schedule.end_time) !== null &&
           timeToMinutes(schedule.end_time) > timeToMinutes(schedule.start_time);
       })
+      .filter((schedule) => {
+        const key = `${selectedDate}|${schedule.scheduleSource || "fixed"}|${schedule.id}|${schedule.title}|${schedule.start_time}|${schedule.end_time}`;
+        return !excludedPlanningScheduleKeys.includes(key);
+      })
       .sort((a, b) => timeToMinutes(a.start_time) - timeToMinutes(b.start_time));
-  }, [fixedSchedules, selectedDate, settings]);
+  }, [fixedSchedules, selectedDate, settings, excludedPlanningScheduleKeys]);
 
   /*
   ================================================
@@ -4187,7 +4220,7 @@ const handleAdoptAIPlan = useCallback(
                       {selectedFixedSchedules.length === 0 ? <p className="muted">登録された固定予定はありません。</p> : selectedFixedSchedules.map((schedule) => (
                         <div className="fixed-item" key={schedule.id}>
                           <div><strong>{schedule.title}</strong><span>{schedule.start_time} - {schedule.end_time}</span></div>
-                          {schedule.scheduleSource === "weekday" ? <small className="muted">曜日設定</small> : <button onClick={() => deleteFixedSchedule(schedule.id)}>×</button>}
+                          <button type="button" aria-label="この日の計画から外す" title="この日の計画から外す（予定設定は残ります）" onClick={() => { const key = `${selectedDate}|${schedule.scheduleSource || "fixed"}|${schedule.id}|${schedule.title}|${schedule.start_time}|${schedule.end_time}`; setExcludedPlanningScheduleKeys((current) => current.includes(key) ? current : [...current, key]); }}>×</button>
                         </div>
                       ))}
                     </div>
