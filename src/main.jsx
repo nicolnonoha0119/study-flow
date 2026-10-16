@@ -382,72 +382,6 @@ function getBlockedIntervals(dateString, settings, fixedSchedules) {
   const weekdaySettings = getWeekdaySettings(dateString, settings);
   const studyStart = timeToMinutes(weekdaySettings.studyStart);
   const studyEnd = timeToMinutes(weekdaySettings.studyEnd);
-  const wake = timeToMinutes(settings.wakeUpTime);
-
-  /*
-   勉強時間帯の外側
-  */
-
-  blocked.push({
-    start: 0,
-    end: Math.max(0, studyStart),
-    type: "outside",
-    label: "勉強開始前",
-  });
-
-  blocked.push({
-    start: Math.min(1440, studyEnd),
-    end: 1440,
-    type: "outside",
-    label: "勉強終了後",
-  });
-
-  /*
-   起床前
-  */
-
-  if (wake > 0 && wake < studyStart) {
-    blocked.push({
-      start: 0,
-      end: wake,
-      type: "sleep",
-      label: "起床前",
-    });
-  }
-
-  /*
-   朝の支度
-  */
-
-  const prepStart = wake;
-  const prepEnd = wake + Number(settings.morningPrepMinutes || 0);
-
-  if (prepEnd > prepStart && prepStart < studyStart) {
-    blocked.push({
-      start: prepStart,
-      end: Math.min(prepEnd, studyStart),
-      type: "prep",
-      label: "朝の支度",
-    });
-  }
-
-  /*
-   自習室への移動
-  */
-
-  if (settings.useStudyRoom && settings.travelMinutes > 0) {
-    const travelEnd = studyStart;
-    const travelStart =
-      studyStart - Number(settings.travelMinutes);
-
-    blocked.push({
-      start: Math.max(0, travelStart),
-      end: travelEnd,
-      type: "travel",
-      label: "自習室への移動",
-    });
-  }
-
   /*
    固定予定
   */
@@ -1005,7 +939,7 @@ function AuthScreen() {
     <div className="app auth-page">
       <main className="auth-container">
         <div className="auth-brand">
-          <div className="brand-mark">S</div>
+          <div className="brand-mark">sf</div>
           <div>
             <div className="brand-name">StudyFlow</div>
             <div className="brand-subtitle">
@@ -3440,7 +3374,7 @@ const handleAdoptAIPlan = useCallback(
     return (
       <div className="app loading-screen">
         <div className="loading-card">
-          <div className="brand-mark">S</div>
+          <div className="brand-mark">sf</div>
           <h2>StudyFlow</h2>
           <p>読み込んでいます...</p>
         </div>
@@ -3460,7 +3394,7 @@ const handleAdoptAIPlan = useCallback(
             className="brand"
             onClick={() => setActiveTab("today")}
           >
-            <div className="brand-mark">S</div>
+            <div className="brand-mark">sf</div>
 
             <div>
               <div className="brand-name">
@@ -3468,7 +3402,7 @@ const handleAdoptAIPlan = useCallback(
               </div>
 
               <div className="brand-subtitle">
-                Smart Study Planner
+                MAKE TIME COUNT
               </div>
             </div>
           </div>
@@ -3546,11 +3480,11 @@ const handleAdoptAIPlan = useCallback(
                 <div>
                   <p className="eyebrow">EXAM STRATEGY</p>
                   <h1>受験戦略・学習診断</h1>
-                  <p className="page-description">今の手応えから復習候補を提案します。診断は任意で、元から決めている学習タスクは変更・削除しません。</p>
+                  <p className="page-description">苦手を見つけて、必要な復習だけ追加。</p>
                 </div>
               </div>
               <section className="card">
-                <div className="section-header"><div><h2>科目ごとの手応え</h2><p>各科目の今の状態を選ぶと、復習候補を作成します。</p></div></div>
+                <div className="section-header"><div><h2>科目ごとの手応え</h2><p>今の手応えを選んでください。</p></div></div>
                 <div className="form-grid">
                   {["英語", "数学", "国語", "理科", "社会"].map((subject) => (
                     <label className="form-field" key={subject}>
@@ -3572,7 +3506,7 @@ const handleAdoptAIPlan = useCallback(
               </section>
               {examDiagnosed && (
                 <section className="card">
-                  <div className="section-header"><div><h2>診断からの復習候補</h2><p>追加する項目だけを選んでください。自動で既存タスクを置き換えることはありません。</p></div></div>
+                  <div className="section-header"><div><h2>診断からの復習候補</h2><p>必要な項目だけ計画に追加できます。</p></div></div>
                   {examRecommendations.length === 0 ? <p className="muted">選択した科目は安定しているようです。定期的に小テストで確認しましょう。</p> : <div className="plan-list">
                     {examRecommendations.map((item) => <div className="plan-item" key={item.subject}>
                       <div className="subject-tag">{item.subject}</div><div className="plan-bar"><strong>{item.title}</strong><span>{item.minutes}分 · {item.reason}</span></div>
@@ -3580,11 +3514,11 @@ const handleAdoptAIPlan = useCallback(
                     </div>)}
                   </div>}
                   <label className="checkbox-row" style={{ marginTop: 16 }}><input type="checkbox" checked={examPlanOptIn} onChange={(e) => setExamPlanOptIn(e.target.checked)} /> 診断の復習候補を学習計画に追加できるようにする</label>
-                  <p className="muted">チェックを入れるまでは候補を計画に追加できません。チェック後も、追加ボタンを押した項目だけが追加されます。既存の学習タスクはそのまま残ります。</p>
+                  <p className="muted">許可したあと、追加ボタンを押した項目だけが計画に入ります。</p>
                 </section>
               )}
               <section className="card">
-                <div className="section-header"><div><h2>診断から追加したタスク</h2><p>追加した項目は、元のタスクと分けて管理できます。削除しても元の学習タスクには影響しません。</p></div></div>
+                <div className="section-header"><div><h2>診断から追加したタスク</h2><p>追加した復習タスクは、いつでも削除できます。</p></div></div>
                 {examAddedTasks.filter((item) => item.date === selectedDate).length === 0 ? <p className="muted">この日の診断追加タスクはありません。</p> : <div className="plan-list">
                   {examAddedTasks.filter((item) => item.date === selectedDate).map((item) => <div className="plan-item" key={item.id}><div className="subject-tag">{item.subject}</div><div className="plan-bar"><strong>{item.title}</strong><span>{item.minutes}分 · {item.reason}</span></div><button className="secondary-button small" onClick={() => setExamAddedTasks((current) => current.filter((task) => task.id !== item.id))}>削除</button></div>)}
                 </div>}
@@ -3597,7 +3531,7 @@ const handleAdoptAIPlan = useCallback(
               <div className="page-header">
                 <div>
                   <p className="eyebrow">
-                    STUDYFLOW
+                    YOUR DAY
                   </p>
 
                   <h1>
@@ -5112,132 +5046,19 @@ const handleAdoptAIPlan = useCallback(
                   </form>
                 </section>
 
-                <section className="card">
+                <section className="card settings-compact-card">
                   <div className="section-header">
                     <div>
-                      <h2>生活・補助設定</h2>
-                      <p>起床時刻・朝の支度・自習室・タスクの初期時間</p>
+                      <h2>学習設定</h2>
+                      <p>タスクの初期時間だけを設定します。</p>
                     </div>
                   </div>
-
-                  <form
-                    className="settings-form"
-                    onSubmit={
-                      saveSettings
-                    }
-                  >
-                    <div className="form-row">
-                      <label>
-                        起床時刻
-                        <input
-                          type="time"
-                          value={
-                            settingsForm.wakeUpTime
-                          }
-                          onChange={(e) =>
-                            setSettingsForm(
-                              (current) => ({
-                                ...current,
-                                wakeUpTime:
-                                  e.target
-                                    .value,
-                              })
-                            )
-                          }
-                        />
-                      </label>
-
-                      <label>
-                        朝の支度
-                        <input
-                          type="number"
-                          min="0"
-                          value={
-                            settingsForm.morningPrepMinutes
-                          }
-                          onChange={(e) =>
-                            setSettingsForm(
-                              (current) => ({
-                                ...current,
-                                morningPrepMinutes:
-                                  e.target
-                                    .value,
-                              })
-                            )
-                          }
-                        />
-                      </label>
-                    </div>
-
-                    <p className="muted">勉強できる時間は、下の「曜日ごとの予定・勉強時間」で曜日別に設定してください。</p>
-
-                    <label className="checkbox-row">
-                      <input
-                        type="checkbox"
-                        checked={
-                          settingsForm.useStudyRoom
-                        }
-                        onChange={(e) =>
-                          setSettingsForm(
-                            (current) => ({
-                              ...current,
-                              useStudyRoom:
-                                e.target
-                                  .checked,
-                            })
-                          )
-                        }
-                      />
-
-                      <span>
-                        自習室を利用する
-                      </span>
-                    </label>
-
-                    {settingsForm.useStudyRoom && (
-                      <label>
-                        自習室までの移動時間
-                        <input
-                          type="number"
-                          min="0"
-                          value={
-                            settingsForm.travelMinutes
-                          }
-                          onChange={(e) =>
-                            setSettingsForm(
-                              (current) => ({
-                                ...current,
-                                travelMinutes:
-                                  e.target
-                                    .value,
-                              })
-                            )
-                          }
-                        />
-                      </label>
-                    )}
-
+                  <form className="settings-form" onSubmit={(e) => { e.preventDefault(); saveSettings(); }}>
                     <label>
-                      タスクのデフォルト時間
-                      <input
-                        type="number"
-                        min="1"
-                        value={
-                          settingsForm.defaultTaskMinutes
-                        }
-                        onChange={(e) =>
-                          setSettingsForm(
-                            (current) => ({
-                              ...current,
-                              defaultTaskMinutes:
-                                e.target
-                                  .value,
-                            })
-                          )
-                        }
-                      />
+                      タスクの標準時間（分）
+                      <input type="number" min="1" value={settingsForm.defaultTaskMinutes} onChange={(e) => setSettingsForm((current) => ({ ...current, defaultTaskMinutes: e.target.value }))} />
                     </label>
-
+                    <button className="primary-button" type="submit">保存</button>
                   </form>
                 </section>
               </div>
@@ -5288,59 +5109,21 @@ const handleAdoptAIPlan = useCallback(
               <section className="card">
                 <div className="section-header">
                   <div>
-                    <h2>現在の自動計画条件</h2>
+                    <h2>今日の目安</h2>
                     <p>
-                      StudyFlowが計算に使用している値
+                      選択中の曜日の勉強時間
                     </p>
                   </div>
                 </div>
 
-                <div className="condition-grid">
-                  <div>
-                    <span>起床</span>
-                    <strong>
-                      {settings.wakeUpTime}
-                    </strong>
-                  </div>
-
-                  <div>
-                    <span>朝の支度</span>
-                    <strong>
-                      {
-                        settings.morningPrepMinutes
-                      }
-                      分
-                    </strong>
-                  </div>
-
+                <div className="condition-grid condition-grid-compact">
                   <div>
                     <span>{WEEKDAYS.find((day) => day.value === weekdayEditorDay)?.label || "選択中の曜日"}の勉強時間</span>
-                    <strong>
-                      {normalizeSettings(settingsForm).weekdaySettings[String(weekdayEditorDay)].studyStart}〜
-                      {normalizeSettings(settingsForm).weekdaySettings[String(weekdayEditorDay)].studyEnd}
-                    </strong>
+                    <strong>{normalizeSettings(settingsForm).weekdaySettings[String(weekdayEditorDay)].studyStart}〜{normalizeSettings(settingsForm).weekdaySettings[String(weekdayEditorDay)].studyEnd}</strong>
                   </div>
-
-                  <div>
-                    <span>自習室</span>
-                    <strong>
-                      {settings.useStudyRoom
-                        ? `利用・${settings.travelMinutes}分`
-                        : "利用しない"}
-                    </strong>
-                  </div>
-
                   <div>
                     <span>今日の空き時間</span>
-                    <strong>
-                      {formatMinutes(
-                        getAvailableMinutes(
-                          selectedDate,
-                          settings,
-                          fixedSchedules
-                        )
-                      )}
-                    </strong>
+                    <strong>{formatMinutes(getAvailableMinutes(selectedDate, settings, fixedSchedules))}</strong>
                   </div>
                 </div>
               </section>
