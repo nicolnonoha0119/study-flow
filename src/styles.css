@@ -3125,3 +3125,80 @@ label select {
 .weekday-schedule-form .form-row { margin: 0; }
 .weekday-settings-card h3 { margin: 18px 0 8px; font-size: 1rem; }
 .weekday-settings-card > label { display: grid; gap: 6px; max-width: 320px; }
+
+/* =========================================
+   StudyFlow — editorial focus redesign
+   Calm ivory canvas, ink typography, forest accent.
+   Appended intentionally to unify legacy components.
+========================================= */
+:root {
+  font-family: Inter, -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", Meiryo, sans-serif;
+  color: #202821;
+  background: #f4f4ee;
+  --sf-ink: #202821;
+  --sf-muted: #70796f;
+  --sf-paper: #fffefa;
+  --sf-line: #e3e5dc;
+  --sf-green: #315b46;
+  --sf-green-dark: #254635;
+  --sf-soft: #eaf0e9;
+}
+html, body { background: #f4f4ee; color: var(--sf-ink); }
+body { background: linear-gradient(180deg, #f8f8f2 0%, #f1f2eb 100%); }
+button, input, select, textarea { font-family: inherit; }
+input, select, textarea {
+  border: 1px solid #dfe3d9; border-radius: 11px; background: #fffefa; color: #202821;
+  padding: 12px 13px; box-shadow: none; transition: border-color .18s ease, box-shadow .18s ease, background .18s ease;
+}
+input:focus, select:focus, textarea:focus { border-color: #6d8b74; box-shadow: 0 0 0 3px rgba(49,91,70,.12); outline: none; }
+.card { background: rgba(255,254,250,.96); border: 1px solid var(--sf-line); border-radius: 18px; box-shadow: 0 7px 22px rgba(32,40,33,.035); }
+.primary-button { background: var(--sf-green); box-shadow: none; border-radius: 11px; }
+.primary-button:hover:not(:disabled) { background: var(--sf-green-dark); box-shadow: 0 5px 12px rgba(37,70,53,.12); }
+.secondary-button { background: #e9ede5; color: #314337; border-radius: 11px; }
+.secondary-button:hover:not(:disabled) { background: #dfe7dc; }
+.ghost-button { border-color: #dce1d8; color: #536255; border-radius: 11px; }
+.eyebrow { color: #53735b; letter-spacing: .18em; }
+.page-header { margin-bottom: 30px; }
+.page-header h1 { color: #202821; font-weight: 750; letter-spacing: -.045em; }
+.page-description, .muted { color: var(--sf-muted); }
+.section-header { gap: 14px; }
+.section-header h2, .card h2 { letter-spacing: -.025em; }
+.nav-button { color: #677267; border-radius: 12px; transition: background .18s ease, color .18s ease; }
+.nav-button.active { background: #e8eee6; color: #244a35; font-weight: 750; }
+.nav-button:hover:not(.active) { background: #f0f2ec; }
+.topbar { background: rgba(255,254,250,.94); border-bottom: 1px solid #e6e8df; backdrop-filter: blur(16px); }
+.brand-name { color: #233c2d; letter-spacing: -.035em; }
+.global-message, .message-box { border-radius: 12px; }
+.progress-bar, .task-progress, .plan-bar { border-radius: 999px; }
+button { -webkit-tap-highlight-color: transparent; }
+input[type="number"] { font-variant-numeric: tabular-nums; }
+
+/* Mobile: all seven destinations remain reachable and Settings is not clipped. */
+@media (max-width: 760px) {
+  .topbar { height: 58px; }
+  .topbar-inner { padding: 0 16px; }
+  .sidebar {
+    top: auto; bottom: 0; left: 0; right: 0; width: 100%; height: calc(112px + env(safe-area-inset-bottom));
+    padding: 7px 8px calc(7px + env(safe-area-inset-bottom));
+    grid-template-columns: repeat(4, minmax(0, 1fr)); grid-template-rows: repeat(2, minmax(0, 1fr));
+    gap: 3px; overflow: visible; border-top: 1px solid #dfe4da; background: rgba(255,254,250,.97);
+    box-shadow: 0 -8px 24px rgba(30,45,32,.06); backdrop-filter: blur(18px);
+  }
+  .nav-button { height: 44px; min-height: 0; padding: 4px 2px; gap: 3px; border-radius: 9px; font-size: 10px; line-height: 1.1; overflow-wrap: normal; white-space: nowrap; }
+  .nav-button span { font-size: 16px; line-height: 1; }
+  .main-content { padding: 23px 14px calc(138px + env(safe-area-inset-bottom)); }
+  .page-header { gap: 12px; margin-bottom: 20px; }
+  .page-header h1 { font-size: 27px; }
+  .card, .content-grid > .card, .right-column .card { border-radius: 16px; padding: 17px; }
+  input, select, textarea { font-size: 16px; min-height: 44px; }
+  .primary-button, .secondary-button, .ghost-button { min-height: 42px; }
+  .settings-grid { grid-template-columns: minmax(0, 1fr) !important; }
+  .settings-grid > * { min-width: 0; }
+  #weekday-settings { scroll-margin-top: 16px; }
+}
+@media (max-width: 430px) {
+  .sidebar { padding-left: 5px; padding-right: 5px; }
+  .nav-button { font-size: 9px; }
+  .main-content { padding-left: 12px; padding-right: 12px; }
+  .page-header h1 { font-size: 25px; }
+}

@@ -1151,6 +1151,14 @@ function App() {
   const [loadingData, setLoadingData] = useState(false);
 
   const [activeTab, setActiveTab] = useState("today");
+  // 受験診断は任意。診断で追加した項目は既存タスクと分離して保存・削除できます。
+  const [examLevels, setExamLevels] = useState({});
+  const [examPlanOptIn, setExamPlanOptIn] = useState(false);
+  const [examAddedTasks, setExamAddedTasks] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("studyflow_exam_added_tasks_v1") || "[]"); }
+    catch { return []; }
+  });
+  const [examDiagnosed, setExamDiagnosed] = useState(false);
 
   const [planningStep, setPlanningStep] = useState(1);
   // STEP 2で外した予定は、選択中の日付の計画だけに適用します。
@@ -1277,6 +1285,29 @@ function App() {
   Auth初期化
   ================================================
   */
+
+  useEffect(() => {
+    try { localStorage.setItem("studyflow_exam_added_tasks_v1", JSON.stringify(examAddedTasks)); }
+    catch (error) { console.warn("受験診断タスクを保存できませんでした", error); }
+  }, [examAddedTasks]);
+
+  const examRecommendations = useMemo(() => {
+    const subjects = ["英語", "数学", "国語", "理科", "社会"];
+    return subjects
+      .filter((subject) => examLevels[subject] && examLevels[subject] !== "得意・安定")
+      .map((subject) => ({
+        subject,
+        title: examLevels[subject] === "基礎に不安" ? `${subject}：基礎事項の確認` : examLevels[subject] === "標準問題でつまずく" ? `${subject}：標準問題を解いて弱点確認` : `${subject}：間違えた問題の解き直し`,
+        minutes: examLevels[subject] === "基礎に不安" ? 25 : 20,
+        reason: examLevels[subject] === "基礎に不安" ? "基礎の理解を確認してから次の段階へ進む" : examLevels[subject] === "標準問題でつまずく" ? "標準問題の解法を定着させる" : "ミスの原因を確認して再発を防ぐ",
+      }));
+  }, [examLevels]);
+
+  const addExamRecommendationToPlan = (recommendation) => {
+    const entry = { id: `exam-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, date: selectedDate, ...recommendation, source: "exam-diagnostic" };
+    setExamAddedTasks((current) => [...current, entry]);
+    setMessage(`診断タスク「${recommendation.title}」を追加しました。不要なら計画から削除できます。`);
+  };
 
   useEffect(() => {
     let mounted = true;
@@ -2276,8 +2307,8 @@ function App() {
     const endPage = Math.floor(Number(progressEndPage));
     const currentPage = Number(goal.current_page || 0);
     const totalPages = Number(goal.total_pages || 0);
-    if (!Number.isFinite(endPage) || endPage < currentPage || endPage > totalPages) {
-      setMessage(`終了ページはP.${currentPage}〜P.${totalPages}の範囲で入力してください。`);
+    if (progressEndPage === "" || !Number.isFinite(endPage) || endPage < 0 || endPage > totalPages) {
+      setMessage(`現在ページは0〜P.${totalPages}の範囲で入力してください。`);
       return;
     }
 
@@ -2301,6 +2332,7 @@ function App() {
     }
 
     const addedPages = Math.max(0, endPage - currentPage);
+    const correctedBackward = endPage < currentPage;
     let historySaveFailed = false;
     if (addedPages > 0) {
       const { error: historyError } = await supabase
@@ -2330,7 +2362,9 @@ function App() {
         ? "現在ページは更新しましたが、ページ履歴の保存に失敗しました。study_goal_progress_logs.sqlを適用してください。"
         : addedPages > 0
           ? `${goal.title}：P.${currentPage + 1}〜P.${endPage}の進捗を記録しました。現在P.${endPage}です。`
-          : `${goal.title}：現在ページをP.${endPage}に更新しました。`
+          : correctedBackward
+            ? `${goal.title}：現在ページをP.${currentPage}からP.${endPage}に修正しました。`
+            : `${goal.title}：現在ページをP.${endPage}に更新しました。`
     );
   };
 
@@ -3460,6 +3494,7 @@ const handleAdoptAIPlan = useCallback(
           {[
             ["today", "⌂", "ホーム"],
             ["goals", "📚", "教材・目標"],
+            ["exam", "◎", "受験戦略・診断"],
             ["plan", "✦", "計画を立てる"],
             ["execute", "▶", "勉強を実行する"],
             ["calendar", "□", "カレンダー"],
@@ -3504,6 +3539,58 @@ const handleAdoptAIPlan = useCallback(
           TODAY
           ========================================
           */}
+
+          {activeTab === "exam" && (
+            <>
+              <div className="page-header">
+                <div>
+                  <p className="eyebrow">EXAM STRATEGY</p>
+                  <h1>受験戦略・学習診断</h1>
+                  <p className="page-description">今の手応えから復習候補を提案します。診断は任意で、元から決めている学習タスクは変更・削除しません。</p>
+                </div>
+              </div>
+              <section className="card">
+                <div className="section-header"><div><h2>科目ごとの手応え</h2><p>各科目の今の状態を選ぶと、復習候補を作成します。</p></div></div>
+                <div className="form-grid">
+                  {["英語", "数学", "国語", "理科", "社会"].map((subject) => (
+                    <label className="form-field" key={subject}>
+                      <span>{subject}</span>
+                      <select value={examLevels[subject] || ""} onChange={(e) => { setExamLevels((current) => ({ ...current, [subject]: e.target.value })); setExamDiagnosed(false); }}>
+                        <option value="">未診断</option>
+                        <option value="基礎に不安">基礎に不安がある</option>
+                        <option value="標準問題でつまずく">標準問題でつまずく</option>
+                        <option value="解けるがミスが多い">解けるがミスが多い</option>
+                        <option value="得意・安定">得意・安定している</option>
+                      </select>
+                    </label>
+                  ))}
+                </div>
+                <div className="button-row" style={{ marginTop: 18 }}>
+                  <button className="primary-button" onClick={() => setExamDiagnosed(true)} disabled={!Object.values(examLevels).some(Boolean)}>診断結果を作成</button>
+                  <button className="secondary-button" onClick={() => { setExamLevels({}); setExamDiagnosed(false); }}>回答をリセット</button>
+                </div>
+              </section>
+              {examDiagnosed && (
+                <section className="card">
+                  <div className="section-header"><div><h2>診断からの復習候補</h2><p>追加する項目だけを選んでください。自動で既存タスクを置き換えることはありません。</p></div></div>
+                  {examRecommendations.length === 0 ? <p className="muted">選択した科目は安定しているようです。定期的に小テストで確認しましょう。</p> : <div className="plan-list">
+                    {examRecommendations.map((item) => <div className="plan-item" key={item.subject}>
+                      <div className="subject-tag">{item.subject}</div><div className="plan-bar"><strong>{item.title}</strong><span>{item.minutes}分 · {item.reason}</span></div>
+                      <button className="secondary-button small" disabled={!examPlanOptIn} onClick={() => addExamRecommendationToPlan(item)}>計画に追加</button>
+                    </div>)}
+                  </div>}
+                  <label className="checkbox-row" style={{ marginTop: 16 }}><input type="checkbox" checked={examPlanOptIn} onChange={(e) => setExamPlanOptIn(e.target.checked)} /> 診断の復習候補を学習計画に追加できるようにする</label>
+                  <p className="muted">チェックを入れるまでは候補を計画に追加できません。チェック後も、追加ボタンを押した項目だけが追加されます。既存の学習タスクはそのまま残ります。</p>
+                </section>
+              )}
+              <section className="card">
+                <div className="section-header"><div><h2>診断から追加したタスク</h2><p>追加した項目は、元のタスクと分けて管理できます。削除しても元の学習タスクには影響しません。</p></div></div>
+                {examAddedTasks.filter((item) => item.date === selectedDate).length === 0 ? <p className="muted">この日の診断追加タスクはありません。</p> : <div className="plan-list">
+                  {examAddedTasks.filter((item) => item.date === selectedDate).map((item) => <div className="plan-item" key={item.id}><div className="subject-tag">{item.subject}</div><div className="plan-bar"><strong>{item.title}</strong><span>{item.minutes}分 · {item.reason}</span></div><button className="secondary-button small" onClick={() => setExamAddedTasks((current) => current.filter((task) => task.id !== item.id))}>削除</button></div>)}
+                </div>}
+              </section>
+            </>
+          )}
 
           {activeTab === "today" && (
             <>
@@ -3660,6 +3747,13 @@ const handleAdoptAIPlan = useCallback(
                             <strong>{item.title}</strong>
                             <span>{item.minutes}分</span>
                           </div>
+                        </div>
+                      ))}
+                      {examAddedTasks.filter((item) => item.date === selectedDate).map((item) => (
+                        <div className="plan-item" key={item.id}>
+                          <div className="plan-time"><span>追加</span></div>
+                          <div className="plan-bar"><div className="subject-tag">{item.subject}</div><strong>{item.title}</strong><span>{item.minutes}分 · 診断から追加</span></div>
+                          <button className="secondary-button small" onClick={() => setExamAddedTasks((current) => current.filter((task) => task.id !== item.id))}>削除</button>
                         </div>
                       ))}
                     </div>
@@ -4442,10 +4536,10 @@ const handleAdoptAIPlan = useCallback(
                           <div className="task-actions">
                             {progressGoalId === goal.id ? (
                               <div className="progress-record">
-                                <span>P.{goal.current_page} → P.</span>
+                                <span>現在 P.{goal.current_page} → 修正後 P.</span>
                                 <input
                                   type="number"
-                                  min={goal.current_page}
+                                  min={0}
                                   max={goal.total_pages}
                                   value={progressEndPage}
                                   onChange={(e) => setProgressEndPage(e.target.value)}
