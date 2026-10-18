@@ -1104,8 +1104,9 @@ function App() {
   const [planningWindow, setPlanningWindow] = useState({
     start: DEFAULT_SETTINGS.studyStart,
     end: DEFAULT_SETTINGS.studyEnd,
-    breakMinutes: DEFAULT_SETTINGS.breakMinutes,
   });
+  // 休憩は時間帯・教材ごとの学習時間とは独立して管理します。
+  const [planningBreakMinutes, setPlanningBreakMinutes] = useState(DEFAULT_SETTINGS.breakMinutes);
 
   const [selectedDate, setSelectedDate] =
     useState(todayString());
@@ -2708,7 +2709,7 @@ const saveSettings = async (event) => {
       fixedSchedules: planningFixedSchedules,
       eligibleTaskIds: planningTaskIds,
       maxSubjectsPerDay: planningMaxSubjects,
-      breakMinutes: Math.max(0, Number(planningWindow.breakMinutes === "" ? 0 : planningWindow.breakMinutes ?? settings.breakMinutes ?? 10) || 0),
+      breakMinutes: Math.max(0, Number(planningBreakMinutes === "" ? 0 : planningBreakMinutes ?? settings.breakMinutes ?? 10) || 0),
     });
 
     return {
@@ -2726,7 +2727,9 @@ const saveSettings = async (event) => {
     selectedDate,
     planningSelectedTasks,
     planningTaskIds,
-    planningWindow,
+    planningWindow.start,
+    planningWindow.end,
+    planningBreakMinutes,
     planningMode,
     planningMaxSubjects,
     settings,
@@ -2737,8 +2740,9 @@ const saveSettings = async (event) => {
   const startPlanningWizard = () => {
     setPlanningStep(1);
     const dayWindow = getWeekdaySettings(selectedDate, settings);
-    const nextWindow = { start: dayWindow.studyStart, end: dayWindow.studyEnd, breakMinutes: Number(settings.breakMinutes ?? 10) };
+    const nextWindow = { start: dayWindow.studyStart, end: dayWindow.studyEnd };
     setPlanningWindow(nextWindow);
+    setPlanningBreakMinutes(Number(settings.breakMinutes ?? 10));
     const initialRecommendations = planningRecommendations.slice(0, 8);
     const initialSubjectLimit = planningMode === "focused" ? 2 : planningMode === "balanced" ? 4 : 3;
     const recommendedSubjectNames = [];
@@ -4192,7 +4196,7 @@ const handleAdoptAIPlan = useCallback(
                 <div>
                   <p className="eyebrow">PLANNING</p>
                   <h1>計画を立てる</h1>
-                  <p className="page-description">順番に答えるだけで、StudyFlowが今日の計画を作ります。</p>
+                  <p className="page-description">時間・予定・教材を1ページでまとめて編集できます。</p>
                 </div>
                 <div className="date-control">
                   <button onClick={() => setSelectedDate(addDays(selectedDate, -1))}>←</button>
@@ -4204,12 +4208,12 @@ const handleAdoptAIPlan = useCallback(
               <section className="card">
                 <div className="section-header">
                   <div>
-                    <h2>STEP {planningStep} / 5</h2>
-                    <p>今日の計画を作成します</p>
+                    <h2>計画を編集</h2>
+                    <p>必要な項目だけ変更してください</p>
                   </div>
                 </div>
 
-                {planningStep === 1 && (
+                {true && (
                   <div>
                     <h2>何時から何時まで勉強できますか？</h2>
                     <p className="muted">いつもの設定から変更点はありますか？設定で登録したこの曜日の時間を初期値にしています。変更がなければそのまま進み、今日は予定が違う場合だけ編集してください。</p>
@@ -4223,16 +4227,16 @@ const handleAdoptAIPlan = useCallback(
                       <label>終了時刻<input type="time" value={planningWindow.end} onChange={(e) => setPlanningWindow((v) => ({ ...v, end: e.target.value }))} /></label>
                     </div>
                     <div className="form-row">
-                      <label>休憩時間（分）<input type="number" min="0" step="1" value={planningWindow.breakMinutes ?? 10} onChange={(e) => setPlanningWindow((v) => ({ ...v, breakMinutes: e.target.value === "" ? "" : e.target.value }))} /></label>
+                      <label>休憩時間（分）<input type="number" min="0" step="1" value={planningBreakMinutes ?? 10} onChange={(e) => setPlanningBreakMinutes(e.target.value === "" ? "" : Number(e.target.value))} /></label>
                     </div>
                     <p className="muted">曜日ごとの通常設定は「設定」→「曜日ごとの予定・勉強時間」で変更できます。ここでの時間変更は今回の計画だけに適用されます。</p>
                     <div className="form-actions">
-                      <button className="primary-button" onClick={() => setPlanningStep(2)}>次へ →</button>
+                      <button className="primary-button wizard-nav" onClick={() => setPlanningStep(2)}>次へ →</button>
                     </div>
                   </div>
                 )}
 
-                {planningStep === 2 && (
+                {true && (
                   <div>
                     <h2>勉強できない予定はありますか？</h2>
                     <p className="muted">学校・塾・部活・食事などを登録すると、その時間を自動で避けます。</p>
@@ -4253,13 +4257,13 @@ const handleAdoptAIPlan = useCallback(
                       ))}
                     </div>
                     <div className="form-actions">
-                      <button className="secondary-button" onClick={() => setPlanningStep(1)}>← 戻る</button>
-                      <button className="primary-button" onClick={() => setPlanningStep(3)}>次へ →</button>
+                      <button className="secondary-button wizard-nav" onClick={() => setPlanningStep(1)}>← 戻る</button>
+                      <button className="primary-button wizard-nav" onClick={() => setPlanningStep(3)}>次へ →</button>
                     </div>
                   </div>
                 )}
 
-                {planningStep === 3 && (
+                {true && (
                   <div>
                     <h2>どれくらいの教科数で勉強しますか？</h2>
                     <p className="muted">ここで選んだ教科数をもとに、次のSTEPでStudyFlowがおすすめを作ります。あとから他の登録教材も追加できます。</p>
@@ -4275,8 +4279,8 @@ const handleAdoptAIPlan = useCallback(
                       ))}
                     </div>
                     <div className="form-actions">
-                      <button className="secondary-button" onClick={() => setPlanningStep(2)}>← 戻る</button>
-                      <button className="primary-button" onClick={() => {
+                      <button className="secondary-button wizard-nav" onClick={() => setPlanningStep(2)}>← 戻る</button>
+                      <button className="primary-button wizard-nav" onClick={() => {
                         const limit = planningMode === "focused" ? 2 : planningMode === "balanced" ? 4 : 3;
                         const ids = [];
                         const subjects = [];
@@ -4297,7 +4301,7 @@ const handleAdoptAIPlan = useCallback(
                   </div>
                 )}
 
-                {planningStep === 4 && (
+                {true && (
                   <div>
                     <h2>今日やる教材を選びましょう</h2>
                     <p className="muted">StudyFlowのおすすめはチェック済みです。おすすめ以外の登録済み教材も自由に追加できます。チェックを外したり、ページ数・時間を変更したりできます。</p>
@@ -4349,13 +4353,13 @@ const handleAdoptAIPlan = useCallback(
                       )}
                     </div>
                     <div className="form-actions">
-                      <button className="secondary-button" onClick={() => setPlanningStep(3)}>← 戻る</button>
-                      <button className="primary-button" disabled={planningTaskIds.length === 0 || planningHasTimeOverflow} onClick={() => setPlanningStep(5)}>次へ →</button>
+                      <button className="secondary-button wizard-nav" onClick={() => setPlanningStep(3)}>← 戻る</button>
+                      <button className="primary-button wizard-nav" disabled={planningTaskIds.length === 0 || planningHasTimeOverflow} onClick={() => setPlanningStep(5)}>次へ →</button>
                     </div>
                   </div>
                 )}
 
-                {planningStep === 5 && (
+                {true && (
                   <div>
                     <h2>今日の計画を確認</h2>
                     <p className="muted">選択した教材と勉強スタイルをもとに計画しています。問題なければ「この計画で決定」を押してください。</p>
@@ -4372,7 +4376,7 @@ const handleAdoptAIPlan = useCallback(
                       <div><span>計画</span><strong>{formatMinutes(planningPreview.plannedMinutes)}</strong></div>
                     </div>
                     <div className="form-actions">
-                      <button className="secondary-button" onClick={() => setPlanningStep(4)}>← 戻る</button>
+                      <button className="secondary-button wizard-nav" onClick={() => setPlanningStep(4)}>← 戻る</button>
                       <button className="primary-button" disabled={planningPreview.plan.length === 0} onClick={finishPlanningWizard}>✓ この計画で決定</button>
                     </div>
                   </div>

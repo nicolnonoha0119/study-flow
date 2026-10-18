@@ -3318,3 +3318,8 @@ label { color: #526054; font-size: 12px; font-weight: 600; }
   .nav-button { font-size: 9px; }
   .main-content { padding-left: 12px; padding-right: 12px; }
 }
+
+
+/* Plan editor: all planning sections stay on one page. */
+.wizard-nav { display: none !important; }
+#root .page-header + .card:has(.recommendation-list) { scroll-margin-top: 24px; }
