@@ -3665,3 +3665,38 @@ input:focus, select:focus, textarea:focus { border-color: #6c947c; box-shadow: 0
   .main-content { padding-left: 11px; padding-right: 11px; }
   .card { padding: 15px; }
 }
+
+/* v34: improve touch targets and spacing between mobile drawer navigation items. */
+@media (max-width: 760px) {
+  .sidebar {
+    row-gap: 10px !important;
+    gap: 10px !important;
+    align-content: flex-start;
+  }
+  .sidebar .nav-button {
+    box-sizing: border-box !important;
+    display: flex !important;
+    position: relative;
+    flex: 0 0 auto !important;
+    width: 100% !important;
+    min-height: 54px !important;
+    height: auto !important;
+    margin: 0 !important;
+    padding: 14px 15px !important;
+    gap: 13px !important;
+    line-height: 1.5 !important;
+    white-space: normal !important;
+    overflow: visible;
+    border-radius: 12px;
+  }
+  .sidebar .nav-button > span {
+    box-sizing: border-box;
+    display: inline-flex;
+    flex: 0 0 24px !important;
+    width: 24px !important;
+    min-width: 24px;
+    align-items: center;
+    justify-content: center;
+    line-height: 1.2;
+  }
+}
