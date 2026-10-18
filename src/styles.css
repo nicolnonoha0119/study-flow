@@ -3524,3 +3524,144 @@ input:focus, select:focus, textarea:focus { border-color: #6c947c; box-shadow: 0
   .review-metrics > div { flex-direction: row; align-items: center; justify-content: space-between; }
   .subject-review-row { grid-template-columns: 1fr; gap: 5px; }
 }
+
+
+/* v33: mobile navigation uses a slide-out drawer instead of an overlapping bar. */
+.mobile-menu-toggle { display: none; }
+.mobile-menu-backdrop { display: none; }
+@media (max-width: 760px) {
+  html, body, #root, .app {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+  }
+  body { overflow-x: hidden; }
+  .topbar {
+    position: sticky;
+    top: 0;
+    z-index: 120;
+    width: 100%;
+  }
+  .topbar-inner {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    width: 100%;
+    padding: 9px 12px;
+  }
+  .mobile-menu-toggle {
+    display: inline-flex;
+    flex: 0 0 40px;
+    width: 40px;
+    height: 40px;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--sf-line, #dfe3d9);
+    border-radius: 12px;
+    background: #fffefa;
+    color: var(--sf-forest, #245744);
+    font-size: 23px;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .mobile-menu-toggle span { display: block; transform: translateY(-1px); }
+  .brand { min-width: 0; flex: 1 1 auto; gap: 9px; }
+  .brand-name { font-size: 16px; }
+  .brand-subtitle { font-size: 8px; letter-spacing: .12em; }
+  .brand-mark { flex: 0 0 auto; }
+  .topbar-user { min-width: 0; gap: 6px; }
+  .topbar-user > span { display: none; }
+  .topbar-user .ghost-button { padding: 8px 9px; font-size: 11px; white-space: nowrap; }
+  .layout {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    margin: 0;
+  }
+  .sidebar {
+    position: fixed !important;
+    z-index: 140;
+    top: var(--mobile-topbar-height, 62px) !important;
+    bottom: 0 !important;
+    left: 0 !important;
+    right: auto !important;
+    display: flex !important;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 5px;
+    width: min(84vw, 310px) !important;
+    max-width: calc(100vw - 48px);
+    height: auto !important;
+    max-height: calc(100dvh - var(--mobile-topbar-height, 62px));
+    overflow-y: auto !important;
+    overscroll-behavior: contain;
+    padding: 16px 13px calc(20px + env(safe-area-inset-bottom, 0px)) !important;
+    margin: 0;
+    border: 0 !important;
+    border-right: 1px solid var(--sf-line, #dfe3d9) !important;
+    border-radius: 0 18px 0 0;
+    background: #f7f7f0 !important;
+    box-shadow: 12px 0 36px rgba(29, 53, 41, .16);
+    transform: translateX(-110%);
+    visibility: hidden;
+    pointer-events: none;
+    transition: transform .22s ease, visibility .22s ease;
+  }
+  .sidebar.mobile-open {
+    transform: translateX(0);
+    visibility: visible;
+    pointer-events: auto;
+  }
+  .nav-button {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 12px;
+    width: 100%;
+    min-height: 46px;
+    margin: 0 !important;
+    padding: 11px 13px !important;
+    text-align: left;
+    font-size: 14px;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .nav-button > span { flex: 0 0 22px; width: 22px; text-align: center; font-size: 17px; }
+  .mobile-menu-backdrop {
+    display: block;
+    position: fixed;
+    z-index: 130;
+    inset: var(--mobile-topbar-height, 62px) 0 0;
+    width: 100%;
+    height: auto;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: rgba(18, 30, 23, .38);
+    cursor: pointer;
+  }
+  .main-content {
+    width: 100% !important;
+    max-width: 100%;
+    min-width: 0;
+    padding: 24px 15px calc(48px + env(safe-area-inset-bottom, 0px));
+  }
+  .main-content > *, .card, .stat-card, .page-header, .section-header { min-width: 0; max-width: 100%; }
+  .card { border-radius: 16px; padding: 19px; }
+  .review-metrics { grid-template-columns: 1fr; }
+  .review-metrics > div { flex-direction: row; align-items: center; justify-content: space-between; }
+  .subject-review-row { grid-template-columns: 1fr; gap: 5px; }
+}
+@media (max-width: 420px) {
+  .topbar-inner { gap: 7px; padding-left: 9px; padding-right: 9px; }
+  .mobile-menu-toggle { flex-basis: 36px; width: 36px; height: 38px; }
+  .brand { gap: 7px; }
+  .brand-mark { width: 32px; height: 32px; }
+  .brand-name { font-size: 14px; }
+  .brand-subtitle { font-size: 7px; }
+  .topbar-user .ghost-button { padding: 7px 8px; font-size: 10px; }
+  .main-content { padding-left: 11px; padding-right: 11px; }
+  .card { padding: 15px; }
+}

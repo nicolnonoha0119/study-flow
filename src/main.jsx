@@ -1085,6 +1085,7 @@ function App() {
   const [loadingData, setLoadingData] = useState(false);
 
   const [activeTab, setActiveTab] = useState("today");
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   // 受験診断は任意。診断で追加した項目は既存タスクと分離して保存・削除できます。
   const [examLevels, setExamLevels] = useState({});
   const [examPlanOptIn, setExamPlanOptIn] = useState(false);
@@ -3478,6 +3479,15 @@ const handleAdoptAIPlan = useCallback(
     <div className="app">
       <header className="topbar">
         <div className="topbar-inner">
+          <button
+            type="button"
+            className="mobile-menu-toggle"
+            aria-label={mobileMenuOpen ? "メニューを閉じる" : "メニューを開く"}
+            aria-expanded={mobileMenuOpen}
+            onClick={() => setMobileMenuOpen((open) => !open)}
+          >
+            <span>{mobileMenuOpen ? "×" : "☰"}</span>
+          </button>
           <div
             className="brand"
             onClick={() => setActiveTab("today")}
@@ -3511,8 +3521,17 @@ const handleAdoptAIPlan = useCallback(
         </div>
       </header>
 
+      {mobileMenuOpen && (
+        <button
+          type="button"
+          className="mobile-menu-backdrop"
+          aria-label="メニューを閉じる"
+          onClick={() => setMobileMenuOpen(false)}
+        />
+      )}
+
       <div className="layout">
-        <aside className="sidebar">
+        <aside className={mobileMenuOpen ? "sidebar mobile-open" : "sidebar"}>
           {[
             ["today", "⌂", "ホーム"],
             ["goals", "📚", "教材・目標"],
@@ -3527,6 +3546,7 @@ const handleAdoptAIPlan = useCallback(
               key={tab}
               className={activeTab === tab ? "nav-button active" : "nav-button"}
               onClick={() => {
+                setMobileMenuOpen(false);
                 if (tab === "plan") startPlanningWizard();
                 else setActiveTab(tab);
               }}
