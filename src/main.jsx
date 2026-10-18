@@ -1095,6 +1095,7 @@ function App() {
   const [examDiagnosed, setExamDiagnosed] = useState(false);
 
   const [planningStep, setPlanningStep] = useState(1);
+  const [planningEditAll, setPlanningEditAll] = useState(false);
   // STEP 2で外した予定は、選択中の日付の計画だけに適用します。
   const [excludedPlanningScheduleKeys, setExcludedPlanningScheduleKeys] = useState([]);
   const [planningMode, setPlanningMode] = useState("standard");
@@ -2737,8 +2738,9 @@ const saveSettings = async (event) => {
     settingsWithPlanningScheduleExclusions,
   ]);
 
-  const startPlanningWizard = () => {
+  const startPlanningWizard = (editAll = false) => {
     setPlanningStep(1);
+    setPlanningEditAll(editAll);
     const dayWindow = getWeekdaySettings(selectedDate, settings);
     const nextWindow = { start: dayWindow.studyStart, end: dayWindow.studyEnd };
     setPlanningWindow(nextWindow);
@@ -3146,6 +3148,88 @@ const handleAdoptAIPlan = useCallback(
         }),
     [tasks, selectedDate]
   );
+
+  // Weekly plan-vs-actual review. Planned minutes and actual minutes are kept separate.
+  const weeklyReview = useMemo(() => {
+    const start = getWeekStart(selectedDate);
+    const dates = Array.from({ length: 7 }, (_, index) => addDays(start, index));
+    const weekTasks = tasks.filter((task) => dates.includes(task.task_date));
+    const planned = weekTasks.reduce((sum, task) => sum + Number(task.minutes || 0), 0);
+    const actual = weekTasks.reduce((sum, task) => sum + Number(task.studied_minutes || 0), 0);
+    const completed = weekTasks.filter((task) => task.completed).length;
+    const unfinished = weekTasks.filter((task) => !task.completed).length;
+    const bySubject = Object.values(weekTasks.reduce((groups, task) => {
+      const subject = task.subject || "その他";
+      if (!groups[subject]) groups[subject] = { subject, planned: 0, actual: 0, unfinished: 0 };
+      groups[subject].planned += Number(task.minutes || 0);
+      groups[subject].actual += Number(task.studied_minutes || 0);
+      if (!task.completed) groups[subject].unfinished += 1;
+      return groups;
+    }, {})).sort((a, b) => (b.planned - b.actual) - (a.planned - a.actual));
+    return { start, end: dates[6], planned, actual, completed, unfinished, count: weekTasks.length, bySubject };
+  }, [tasks, selectedDate]);
+
+  const adjustTaskPriority = async (task, delta) => {
+    const nextPriority = Math.max(1, Math.min(5, Number(task.priority || 3) + delta));
+    if (nextPriority === Number(task.priority || 3)) return;
+    if (session?.user?.id) {
+      const { error } = await supabase.from("tasks").update({ priority: nextPriority }).eq("id", task.id).eq("user_id", session.user.id);
+      if (error) {
+        setMessage("優先度を保存できませんでした。通信状態を確認してください。");
+        return;
+      }
+    }
+    setTasks((current) => current.map((item) => item.id === task.id ? { ...item, priority: nextPriority } : item));
+    setMessage(`${task.title} の優先度を変更しました。タスク一覧は優先度順に並び替わります。`);
+  };
+
+  const rescheduleUnfinishedTasks = async () => {
+    const pending = tasks.filter((task) => task.task_date === selectedDate && !task.completed);
+    if (!pending.length) {
+      setMessage("移動できる未完了タスクはありません。");
+      return;
+    }
+    const capacityByDate = {};
+    const updates = [];
+    for (const task of [...pending].sort((a, b) => Number(b.priority || 0) - Number(a.priority || 0))) {
+      let targetDate = "";
+      for (let offset = 1; offset <= 14; offset += 1) {
+        const candidate = addDays(selectedDate, offset);
+        if (candidate < todayString()) continue;
+        if (capacityByDate[candidate] === undefined) {
+          capacityByDate[candidate] = Math.max(0, getAvailableMinutes(candidate, settings, fixedSchedules) - tasks.filter((item) => item.task_date === candidate && !item.completed).reduce((sum, item) => sum + Number(item.minutes || 0), 0));
+        }
+        if (capacityByDate[candidate] >= Number(task.minutes || 0)) {
+          targetDate = candidate;
+          capacityByDate[candidate] -= Number(task.minutes || 0);
+          break;
+        }
+      }
+      if (targetDate) updates.push({ task, targetDate });
+    }
+    if (!updates.length) {
+      setMessage("向こう14日間に配置できる空き時間がありません。学習可能時間や固定予定を見直してください。");
+      return;
+    }
+    const successful = [];
+    for (const item of updates) {
+      if (session?.user?.id) {
+        const { error } = await supabase.from("tasks").update({ task_date: item.targetDate }).eq("id", item.task.id).eq("user_id", session.user.id);
+        if (error) {
+          console.error("タスクの再配置に失敗しました:", error);
+          continue;
+        }
+      }
+      successful.push(item);
+    }
+    if (successful.length) {
+      const moved = new Map(successful.map(({ task, targetDate }) => [task.id, targetDate]));
+      setTasks((current) => current.map((task) => moved.has(task.id) ? { ...task, task_date: moved.get(task.id) } : task));
+      setMessage(`${successful.length}件の未完了タスクを、空き時間のある日へ再配置しました。学習履歴はそのまま保持しています。`);
+    } else {
+      setMessage("再配置を保存できませんでした。通信状態を確認してください。");
+    }
+  };
 
   const selectedFixedSchedules = useMemo(() => {
     // 日付指定の固定予定に加え、「設定 > 曜日ごとの予定」に
@@ -3652,6 +3736,15 @@ const handleAdoptAIPlan = useCallback(
                 </div>
               </section>
 
+              <section className="card flow-card">
+                <div className="flow-card-copy">
+                  <p className="eyebrow">SMART RECOVERY</p>
+                  <h2>予定がずれても、計画は立て直せます。</h2>
+                  <p>未完了タスクを優先度順に確認し、今後14日間の学習可能時間と既存タスク量を見ながら再配置します。学習履歴は変更しません。</p>
+                </div>
+                <button className="primary-button" onClick={rescheduleUnfinishedTasks}>未完了タスクを自動調整</button>
+              </section>
+
               <div className="content-grid">
                 <section className="card">
                   <div className="section-header">
@@ -3659,7 +3752,7 @@ const handleAdoptAIPlan = useCallback(
                       <h2>今日の計画</h2>
                       <p>勉強できる時間・予定・タスクから作成した今日の計画です。</p>
                     </div>
-                    <button className="secondary-button small" onClick={startPlanningWizard}>
+                    <button className="secondary-button small" onClick={() => startPlanningWizard(true)}>
                       計画を変更
                     </button>
                   </div>
@@ -3965,14 +4058,18 @@ const handleAdoptAIPlan = useCallback(
 
                             <div className="task-actions">
                               <button
-                                onClick={() =>
-                                  setTimerTaskId(
-                                    task.id
-                                  )
-                                }
+                                title="このタスクのタイマーを開始"
+                                onClick={() => {
+                                  setTimerTaskId(task.id);
+                                  setTimerRunning(false);
+                                  setTimerSeconds(0);
+                                  setActiveTab("execute");
+                                }}
                               >
-                                ▶
+                                ▶ 開始
                               </button>
+                              <button title="優先度を下げる" disabled={Number(task.priority || 3) <= 1} onClick={() => adjustTaskPriority(task, -1)}>−優先度</button>
+                              <button title="優先度を上げる" disabled={Number(task.priority || 3) >= 5} onClick={() => adjustTaskPriority(task, 1)}>＋優先度</button>
 
                               <button
                                 onClick={() =>
@@ -4205,15 +4302,16 @@ const handleAdoptAIPlan = useCallback(
                 </div>
               </div>
 
-              <section className="card">
-                <div className="section-header">
+              <section className={`card planning-card ${planningEditAll ? "planning-edit-all" : "planning-step-mode"}`}>
+                <div className="section-header planning-editor-header">
                   <div>
-                    <h2>計画を編集</h2>
-                    <p>必要な項目だけ変更してください</p>
+                    <p className="eyebrow">{planningEditAll ? "QUICK EDIT" : `STEP ${planningStep} / 5`}</p>
+                    <h2>{planningEditAll ? "計画をまとめて編集" : "今日の計画を作成"}</h2>
+                    <p>{planningEditAll ? "変更したい項目を直接編集できます。" : "順番に確認しながら、今日の学習計画を作成します。"}</p>
                   </div>
                 </div>
 
-                {true && (
+                {(planningEditAll || planningStep === 1) && (
                   <div>
                     <h2>何時から何時まで勉強できますか？</h2>
                     <p className="muted">いつもの設定から変更点はありますか？設定で登録したこの曜日の時間を初期値にしています。変更がなければそのまま進み、今日は予定が違う場合だけ編集してください。</p>
@@ -4236,7 +4334,7 @@ const handleAdoptAIPlan = useCallback(
                   </div>
                 )}
 
-                {true && (
+                {(planningEditAll || planningStep === 2) && (
                   <div>
                     <h2>勉強できない予定はありますか？</h2>
                     <p className="muted">学校・塾・部活・食事などを登録すると、その時間を自動で避けます。</p>
@@ -4263,7 +4361,7 @@ const handleAdoptAIPlan = useCallback(
                   </div>
                 )}
 
-                {true && (
+                {(planningEditAll || planningStep === 3) && (
                   <div>
                     <h2>どれくらいの教科数で勉強しますか？</h2>
                     <p className="muted">ここで選んだ教科数をもとに、次のSTEPでStudyFlowがおすすめを作ります。あとから他の登録教材も追加できます。</p>
@@ -4301,7 +4399,7 @@ const handleAdoptAIPlan = useCallback(
                   </div>
                 )}
 
-                {true && (
+                {(planningEditAll || planningStep === 4) && (
                   <div>
                     <h2>今日やる教材を選びましょう</h2>
                     <p className="muted">StudyFlowのおすすめはチェック済みです。おすすめ以外の登録済み教材も自由に追加できます。チェックを外したり、ページ数・時間を変更したりできます。</p>
@@ -4359,7 +4457,7 @@ const handleAdoptAIPlan = useCallback(
                   </div>
                 )}
 
-                {true && (
+                {(planningEditAll || planningStep === 5) && (
                   <div>
                     <h2>今日の計画を確認</h2>
                     <p className="muted">選択した教材と勉強スタイルをもとに計画しています。問題なければ「この計画で決定」を押してください。</p>
@@ -4410,7 +4508,7 @@ const handleAdoptAIPlan = useCallback(
               <section className="card">
                 <div className="section-header"><div><h2>今日のスケジュール</h2><p>{formatDateJP(selectedDate)}</p></div></div>
                 <div className="plan-list">
-                  {currentPlanForAI.length === 0 ? <p className="muted">まだ今日の計画がありません。「計画を立てる」から作成してください。</p> : currentPlanForAI.map((item) => <div className="plan-item" key={item.id}><div className="plan-time">{minutesToTime(item.start)}<span>↓</span>{minutesToTime(item.end)}</div><div className="plan-bar"><div className="subject-tag">{item.subject}</div><strong>{item.title}</strong><span>{item.pageStart && item.pageEnd ? `P.${item.pageStart}〜P.${item.pageEnd} · ` : ""}{item.minutes}分</span></div><button className="secondary-button small" onClick={() => setTimerTaskId(item.taskId || "")}>選択</button></div>)}
+                  {currentPlanForAI.length === 0 ? <p className="muted">まだ今日の計画がありません。「計画を立てる」から作成してください。</p> : currentPlanForAI.map((item) => <div className="plan-item" key={item.id}><div className="plan-time">{minutesToTime(item.start)}<span>↓</span>{minutesToTime(item.end)}</div><div className="plan-bar"><div className="subject-tag">{item.subject}</div><strong>{item.title}</strong><span>{item.pageStart && item.pageEnd ? `P.${item.pageStart}〜P.${item.pageEnd} · ` : ""}{item.minutes}分</span></div><button className="secondary-button small" onClick={() => { setTimerTaskId(item.taskId || ""); setActiveTab("execute"); setTimerRunning(false); setTimerSeconds(0); }}>勉強を開始</button></div>)}
                 </div>
               </section>
             </>
@@ -4730,6 +4828,20 @@ const handleAdoptAIPlan = useCallback(
                   <strong>{studyStreak}</strong>
                   <small>日連続</small>
                 </div>
+              </section>
+
+              <section className="card weekly-review-card">
+                <div className="section-header">
+                  <div><p className="eyebrow">WEEKLY REVIEW</p><h2>今週の計画と実績</h2><p>{formatDateJP(weeklyReview.start)}〜{formatDateJP(weeklyReview.end)} · タスクの予定時間と実績時間を比較します。</p></div>
+                </div>
+                <div className="review-metrics">
+                  <div><span>予定時間</span><strong>{formatMinutes(weeklyReview.planned)}</strong></div>
+                  <div><span>実績時間</span><strong>{formatMinutes(weeklyReview.actual)}</strong></div>
+                  <div><span>完了タスク</span><strong>{weeklyReview.completed}<small> / {weeklyReview.count}件</small></strong></div>
+                </div>
+                <div className="review-progress"><span style={{ width: `${weeklyReview.planned > 0 ? Math.min(100, Math.round(weeklyReview.actual / weeklyReview.planned * 100)) : 0}%` }} /></div>
+                <p className="review-insight">{weeklyReview.count === 0 ? "今週のタスクを計画すると、ここに振り返りが表示されます。" : weeklyReview.actual < weeklyReview.planned * 0.7 ? "予定に対して実績が少なめです。来週はタスク量を少し抑えるか、未完了タスクの再配置を活用しましょう。" : weeklyReview.actual > weeklyReview.planned * 1.15 ? "予定より学習時間が多くなっています。次回は見積もり時間を少し長めに設定すると計画精度が上がります。" : "計画と実績はおおむね近い状態です。このペースを次週の計画に活かしましょう。"}</p>
+                {weeklyReview.bySubject.length > 0 && <div className="subject-review-list">{weeklyReview.bySubject.slice(0, 5).map((item) => <div className="subject-review-row" key={item.subject}><span>{item.subject}</span><span>予定 {formatMinutes(item.planned)} · 実績 {formatMinutes(item.actual)}</span><strong>{item.unfinished ? `未完了 ${item.unfinished}件` : "完了"}</strong></div>)}</div>}
               </section>
 
               <div className="content-grid">
